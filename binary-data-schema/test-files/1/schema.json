@@ -1,0 +1,30 @@
+{
+    "type": "object",
+    "properties": {
+        "temperature": {
+            "type": "number",
+            "encodedType": "integer",
+            "byteorder": "littleendian",
+            "length": 2,
+            "position": 1,
+            "scale": 0.01,
+            "unit": "degree celcius",
+            "description": "Temperature of the surrounding air in °C"
+        },
+        "humidity": {
+            "type": "integer",
+            "length": 1,
+            "signed": false,
+            "position": 2,
+            "unit": "percent",
+            "description": "Humidity of the surrounding air in %"
+        },
+        "something": {
+            "type": "integer",
+            "length": 1,
+            "position": 3,
+            "description": "The meaning of this field is unknown to the author"
+        }
+    },
+    "required": ["temperature", "humidity"]
+}

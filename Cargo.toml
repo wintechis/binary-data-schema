@@ -1,12 +1,4 @@
-[package]
-name = "binary-data-schema"
-version = "0.1.0"
-authors = ["Matthias Farnbauer-Schmidt <matthias.farnbauer-schmidt@fau.de>"]
-edition = "2018"
-description = "Meta language for raw binary serialization"
-repository = "https://github.com/wintechis/binary-data-schema"
-license = "MIT OR Apache-2.0"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
+[workspace]
+members = [
+  "binary-data-schema",
+]
