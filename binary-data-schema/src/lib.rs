@@ -1,23 +1,31 @@
 //! Implementation of the binary data schema
 
-use byteorder::{ReadBytesExt, WriteBytesExt, BE, LE};
+#![warn(missing_debug_implementations)]
+
+use byteorder::WriteBytesExt;
 use serde::Deserialize;
 use std::io;
+
+mod integer;
+pub use self::integer::*;
+mod number;
+pub use self::number::*;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Errors from binary serialization.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error(
-        "The provided buffer only provides {available} bytes but {required} bytes are required."
-    )]
-    InsufficientBuffer { required: usize, available: usize },
     #[error("Encoding a value failed: {0}")]
     WriteFail(#[from] io::Error),
+    #[error("Invalid length requested: Maximum allowed is {max} but {requested} where requested")]
+    MaxLength { max: usize, requested: usize },
+    #[error("The reeusted length of {requested} is invalid for floating-point serialization. Either use 4 or 8 or use an integer encoding")]
+    InvalidFloatingLength { requested: usize },
 }
 
 /// Length in bytes when binary serialized.
+#[derive(Debug, Clone)]
 pub enum Length {
     /// Always fixed.
     Fixed(usize),
@@ -29,7 +37,7 @@ pub enum Length {
     Dynamic(Integer),
 }
 
-/// A chema to serialze a value to bytes.
+/// A schema to serialize a value to bytes.
 pub trait BinarySchema {
     /// The type of values that can be serialized.
     type Value;
@@ -42,62 +50,6 @@ pub trait BinarySchema {
     fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt;
-}
-
-#[derive(Debug, Copy, Clone, Deserialize)]
-pub struct Integer {
-    #[serde(default)]
-    byteorder: ByteOrder,
-    #[serde(default = "Integer::default_length")]
-    length: usize,
-    #[serde(default = "Integer::default_signed")]
-    signed: bool,
-}
-
-impl Integer {
-    pub fn default_length() -> usize {
-        4
-    }
-    pub fn default_signed() -> bool {
-        true
-    }
-}
-
-impl Default for Integer {
-    fn default() -> Self {
-        Self {
-            length: Integer::default_length(),
-            signed: Integer::default_signed(),
-            byteorder: Default::default(),
-        }
-    }
-}
-
-impl BinarySchema for Integer {
-    type Value = i64;
-
-    fn length_encoded(&self) -> Length {
-        Length::Fixed(self.length)
-    }
-    fn encoded_size(&self, _: &Self::Value) -> usize {
-        self.length
-    }
-    fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
-    where
-        W: io::Write + WriteBytesExt,
-    {
-        let mut target = target;
-        match (self.byteorder, self.signed) {
-            (ByteOrder::BigEndian, true) => target.write_int::<BE>(*value, self.length)?,
-            (ByteOrder::BigEndian, false) => target.write_uint::<BE>(*value as _, self.length)?,
-            (ByteOrder::LittleEndian, true) => target.write_int::<LE>(*value, self.length)?,
-            (ByteOrder::LittleEndian, false) => {
-                target.write_uint::<LE>(*value as _, self.length)?
-            }
-        };
-
-        Ok(self.length)
-    }
 }
 
 /// The different schema types.
@@ -140,15 +92,8 @@ impl Default for ByteOrder {
     }
 }
 
-/// Base for each schema.
-pub struct DataSchema {
-    base: Schema,
-    position: usize,
-}
-
 #[cfg(test)]
 mod test {
-    use super::*;
     use anyhow::Result;
     use serde_json::{from_reader, to_string_pretty};
     use std::fs::File;
@@ -174,53 +119,6 @@ mod test {
 
         assert!(expect_valid.is_valid());
         assert!(!expect_invalid.is_valid());
-        Ok(())
-    }
-
-    #[test]
-    fn encode_integer_4_signed() -> Result<()> {
-        let schema_msb = Integer::default();
-        let schema_lsb = Integer {
-            byteorder: ByteOrder::LittleEndian,
-            ..schema_msb
-        };
-        let value: i32 = 0x1234_5678;
-        let mut buffer = [0; 4];
-
-        assert_eq!(4, schema_msb.encode(buffer.as_mut(), &(value as _))?);
-        let buf_value = i32::from_be_bytes(buffer);
-        assert_eq!(value, buf_value);
-
-        assert_eq!(4, schema_lsb.encode(buffer.as_mut(), &(value as _))?);
-        let buf_value = i32::from_le_bytes(buffer);
-        assert_eq!(value, buf_value);
-
-        Ok(())
-    }
-
-    #[test]
-    fn encode_integer_3_unsigned() -> Result<()> {
-        let schema_msb = Integer {
-            length: 3,
-            signed: false,
-            byteorder: ByteOrder::BigEndian,
-        };
-        let schema_lsb = Integer {
-            byteorder: ByteOrder::LittleEndian,
-            ..schema_msb
-        };
-        let value: i64 = 0x123456;
-        let mut buffer: Vec<u8> = vec![];
-
-        assert_eq!(3, schema_msb.encode(&mut buffer, &(value))?);
-        assert!(matches!(buffer.as_slice(), [0x12, 0x34, 0x56, ..]));
-
-        assert_eq!(3, schema_lsb.encode(&mut buffer, &(value))?);
-        assert!(matches!(
-            buffer.as_slice(),
-            [0x12, 0x34, 0x56, 0x56, 0x34, 0x12, ..]
-        ));
-
         Ok(())
     }
 }

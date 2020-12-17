@@ -3,11 +3,11 @@
     "properties": {
         "temperature": {
             "type": "number",
-            "encodedType": "integer",
+            "binaryencoded": "integer",
             "byteorder": "littleendian",
             "length": 2,
-            "position": 1,
             "scale": 0.01,
+            "position": 1,
             "unit": "degree celcius",
             "description": "Temperature of the surrounding air in °C"
         },
