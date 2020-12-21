@@ -20,8 +20,22 @@ pub enum Error {
     WriteFail(#[from] io::Error),
     #[error("Invalid length requested: Maximum allowed is {max} but {requested} where requested")]
     MaxLength { max: usize, requested: usize },
-    #[error("The reeusted length of {requested} is invalid for floating-point serialization. Either use 4 or 8 or use an integer encoding")]
+    #[error("The requsted length of {requested} is invalid for floating-point serialization. Either use 4 or 8 or use an integer encoding")]
     InvalidFloatingLength { requested: usize },
+    #[error("The requested offset of {requested} bits is invalid as only {max} bits are available in the field.")]
+    BitOffset { max: usize, requested: usize },
+    #[error("The requested fieldsize of {requested} bits is insufficient. It must be between 1 and {max} bits.")]
+    InvalidBitWidth { max: usize, requested: usize },
+    #[error("Can not join no bitfields.")]
+    NoBitfields,
+    #[error("Can not join bitfields as they are overlapping.")]
+    OverlappingBitfields,
+    #[error("Can not join bitfields with varing number of bytes.")]
+    NotSameBytes,
+    #[error("Invalid integer schema. Not a bitfield: {bf}; nor an integer: {int}")]
+    InvalidIntegerSchema { bf: Box<Error>, int: Box<Error> },
+    #[error("The given value can not be encoded with the given schema.")]
+    InvalidValue,
 }
 
 /// Length in bytes when binary serialized.
@@ -52,31 +66,26 @@ pub trait BinarySchema {
         W: io::Write + WriteBytesExt;
 }
 
-/// The different schema types.
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type")]
-pub enum Schema {
-    /// NumberSchema
-    #[serde(rename = "number")]
-    Number,
-    #[serde(rename = "integer")]
-    Integer(Integer),
-    /// BooleanSchema
-    #[serde(rename = "boolean")]
-    Boolean,
-    /// StringSchema
-    #[serde(rename = "string")]
-    String,
-    /// ArraySchema
-    #[serde(rename = "array")]
-    Array,
-    /// ObjectSchema
-    #[serde(rename = "object")]
-    Object,
-    /// NullSchema
-    #[serde(rename = "null")]
-    Null,
-}
+// /// The different schema types.
+// #[derive(Debug, Deserialize)]
+// #[serde(tag = "type")]
+// #[serde(rename_all = "lowercase")]
+// pub enum Schema {
+//     /// NumberSchema
+//     Number,
+//     /// IntegerSchema
+//     Integer(Integer),
+//     /// BooleanSchema
+//     Boolean,
+//     /// StringSchema
+//     String,
+//     /// ArraySchema
+//     Array,
+//     /// ObjectSchema
+//     Object,
+//     /// NullSchema
+//     Null,
+// }
 
 #[derive(Debug, Copy, Clone, Deserialize, Eq, PartialEq)]
 pub enum ByteOrder {
