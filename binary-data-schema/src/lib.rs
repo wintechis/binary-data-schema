@@ -10,6 +10,8 @@ mod integer;
 pub use self::integer::*;
 mod number;
 pub use self::number::*;
+mod boolean;
+pub use self::boolean::*;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -43,12 +45,8 @@ pub enum Error {
 pub enum Length {
     /// Always fixed.
     Fixed(usize),
-    /// Fixed size but partially filled.
-    PartiallyFilled { capacity: usize, end: u8 },
-    /// Length is encoded in the field.
-    ///
-    /// The length is the first integer in the field, e.g. the first byte.
-    Dynamic(Integer),
+    /// Varies depending on the value.
+    Variable,
 }
 
 /// A schema to serialize a value to bytes.
@@ -65,27 +63,6 @@ pub trait BinarySchema {
     where
         W: io::Write + WriteBytesExt;
 }
-
-// /// The different schema types.
-// #[derive(Debug, Deserialize)]
-// #[serde(tag = "type")]
-// #[serde(rename_all = "lowercase")]
-// pub enum Schema {
-//     /// NumberSchema
-//     Number,
-//     /// IntegerSchema
-//     Integer(Integer),
-//     /// BooleanSchema
-//     Boolean,
-//     /// StringSchema
-//     String,
-//     /// ArraySchema
-//     Array,
-//     /// ObjectSchema
-//     Object,
-//     /// NullSchema
-//     Null,
-// }
 
 #[derive(Debug, Copy, Clone, Deserialize, Eq, PartialEq)]
 pub enum ByteOrder {

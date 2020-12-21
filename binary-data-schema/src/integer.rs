@@ -107,6 +107,16 @@ pub struct Bitfield {
     offset: usize,
 }
 
+impl Default for Bitfield {
+    fn default() -> Self {
+        Self {
+            bytes: 1,
+            bits: 1,
+            offset: 0,
+        }
+    }
+}
+
 impl Bitfield {
     /// Create a new bitfield.
     pub fn new(bytes: usize, bits: usize, offset: usize) -> Result<Self> {
@@ -133,6 +143,13 @@ impl Bitfield {
                 offset,
             })
         }
+    }
+    /// Width of the bitfield in bits.
+    pub fn bits(&self) -> usize {
+        self.bits
+    }
+    pub fn bytes(&self) -> usize {
+        self.bytes
     }
     /// Mask to select the bits covered by the bitfield.
     pub fn mask(&self) -> u64 {
@@ -190,8 +207,27 @@ impl BinarySchema for Bitfield {
 impl TryFrom<RawIntegerSchema> for Bitfield {
     type Error = Error;
 
+    /// Try to build a bitfield schema from a raw definition.
+    ///
+    /// # Defaults
+    ///
+    /// If only `"bitoffset"` is present a bit width of 1 is assumed.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `"bits"` and `"bitoffset"` are not present. If you want
+    /// to default in such case use [Bitfield::from_raw].
+    ///
+    /// Furthermore, errors are raised when:
+    /// - The `"length"` exceeds the maximum integer schema length, i.e. 8.
+    /// - If `"bits"` and `"bitoffset"` together are bigger than the bitfield.
+    /// - If `"bits"` is 0.
     fn try_from(raw: RawIntegerSchema) -> Result<Self, Self::Error> {
-        Bitfield::new(raw.length, raw.bits, raw.bit_offset)
+        if raw.bit_offset != 0 && raw.bits == 0 {
+            Bitfield::new(raw.length, 1, raw.bit_offset)
+        } else {
+            Bitfield::new(raw.length, raw.bits, raw.bit_offset)
+        }
     }
 }
 
@@ -215,6 +251,20 @@ impl Integer {
                 length,
                 signed,
             })
+        }
+    }
+    /// Default schema with a length of 8 bytes.
+    pub fn default_long() -> Self {
+        Self {
+            length: 8,
+            ..Default::default()
+        }
+    }
+    /// Default schema with a length of 1 byte.
+    pub fn default_short() -> Self {
+        Self {
+            length: 1,
+            ..Default::default()
         }
     }
 }
@@ -277,6 +327,14 @@ impl IntegerSchema {
     }
     pub fn default_signed() -> bool {
         DEFAULT_SIGNED
+    }
+    /// Default integer schema with 8 bytes length.
+    pub fn long_int() -> Self {
+        Integer::default_long().into()
+    }
+    /// Default integer schema with 1 byte length.
+    pub fn short_int() -> Self {
+        Integer::default_short().into()
     }
     pub fn length(&self) -> usize {
         match self {
@@ -355,7 +413,7 @@ impl BinarySchema for IntegerSchema {
 mod test {
     use super::*;
     use anyhow::Result;
-    use serde_json::{json, from_value};
+    use serde_json::{from_value, json};
 
     #[test]
     fn encode_integer_4_signed() -> Result<()> {
