@@ -4,7 +4,9 @@
 
 use byteorder::WriteBytesExt;
 use serde::Deserialize;
+use serde_json::Value;
 use std::io;
+use std::ops::Add;
 
 mod integer;
 pub use self::integer::*;
@@ -38,8 +40,8 @@ pub enum Error {
     NotSameBytes,
     #[error("Invalid integer schema. Not a bitfield: {bf}; nor an integer: {int}")]
     InvalidIntegerSchema { bf: Box<Error>, int: Box<Error> },
-    #[error("The given value can not be encoded with the given schema.")]
-    InvalidValue,
+    #[error("The value '{}' can not be encoded with the a {type_} schema.")]
+    InvalidValue { value: String, type_: &'static str },
     #[error("A fixed length string schema requires a 'maxLength' property.")]
     MissingCapacity,
     #[error(
@@ -52,10 +54,12 @@ pub enum Error {
     ToLongString { value: String, cap: usize },
     #[error("The default character has to be UTF8 encoded as one byte but '{0}' is encoded in {} bytes", .0.len_utf8())]
     InvalidDefaultChar(char),
+    #[error("'{0}' is not a field in the schema.")]
+    NotAField(String),
 }
 
 /// Length in bytes when binary serialized.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Length {
     /// Always fixed.
     Fixed(usize),
@@ -63,15 +67,26 @@ pub enum Length {
     Variable,
 }
 
+impl Add for Length {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Length::Fixed(lhs), Length::Fixed(rhs)) => Length::Fixed(lhs + rhs),
+            (Length::Fixed(_), Length::Variable)
+            | (Length::Variable, Length::Fixed(_))
+            | (Length::Variable, Length::Variable) => Length::Variable,
+        }
+    }
+}
+
 /// A schema to serialize a value to bytes.
-pub trait BinarySchema {
+pub trait BinaryCodec {
     /// The type of values that can be serialized.
-    type Value;
+    type Value: ?Sized;
 
     /// General length a serialization of this schema.
     fn length_encoded(&self) -> Length;
-    /// Concrete size in bytes the value will have serialized.
-    fn encoded_size(&self, value: &Self::Value) -> usize;
     /// Write the value according to the schema.
     fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
     where
@@ -79,16 +94,96 @@ pub trait BinarySchema {
 }
 
 #[derive(Debug, Copy, Clone, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub enum ByteOrder {
-    #[serde(rename = "littleendian")]
     LittleEndian,
-    #[serde(rename = "bigendian")]
     BigEndian,
 }
 
 impl Default for ByteOrder {
     fn default() -> Self {
         ByteOrder::BigEndian
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type")]
+pub enum DataSchema {
+    Boolean(BooleanSchema),
+    Integer(IntegerSchema),
+    Number(NumberSchema),
+    String(StringSchema),
+}
+
+impl From<BooleanSchema> for DataSchema {
+    fn from(v: BooleanSchema) -> Self {
+        DataSchema::Boolean(v)
+    }
+}
+
+impl From<IntegerSchema> for DataSchema {
+    fn from(v: IntegerSchema) -> Self {
+        DataSchema::Integer(v)
+    }
+}
+
+impl From<NumberSchema> for DataSchema {
+    fn from(v: NumberSchema) -> Self {
+        DataSchema::Number(v)
+    }
+}
+
+impl From<StringSchema> for DataSchema {
+    fn from(v: StringSchema) -> Self {
+        DataSchema::String(v)
+    }
+}
+
+impl BinaryCodec for DataSchema {
+    type Value = Value;
+
+    fn length_encoded(&self) -> Length {
+        match self {
+            DataSchema::Boolean(schema) => schema.length_encoded(),
+            DataSchema::Integer(schema) => schema.length_encoded(),
+            DataSchema::Number(schema) => schema.length_encoded(),
+            DataSchema::String(schema) => schema.length_encoded(),
+        }
+    }
+    fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
+    where
+        W: io::Write + WriteBytesExt,
+    {
+        match self {
+            DataSchema::Boolean(schema) => {
+                let value = value.as_bool().ok_or_else(|| Error::InvalidValue {
+                    value: value.to_string(),
+                    type_: "boolean",
+                })?;
+                schema.encode(target, &value)
+            }
+            DataSchema::Integer(schema) => {
+                let value = value.as_i64().ok_or_else(|| Error::InvalidValue {
+                    value: value.to_string(),
+                    type_: "integer",
+                })?;
+                schema.encode(target, &value)
+            }
+            DataSchema::Number(schema) => {
+                let value = value.as_f64().ok_or_else(|| Error::InvalidValue {
+                    value: value.to_string(),
+                    type_: "number",
+                })?;
+                schema.encode(target, &value)
+            }
+            DataSchema::String(schema) => {
+                let value = value.as_str().ok_or_else(|| Error::InvalidValue {
+                    value: value.to_string(),
+                    type_: "string",
+                })?;
+                schema.encode(target, value)
+            }
+        }
     }
 }
 

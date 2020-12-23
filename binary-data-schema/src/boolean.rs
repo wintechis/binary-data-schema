@@ -1,6 +1,6 @@
 //! Implementation of the Boolean schema
 
-use crate::{BinarySchema, Bitfield, Error, Length, Result};
+use crate::{BinaryCodec, Bitfield, Error, Length, Result};
 use byteorder::WriteBytesExt;
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;
@@ -62,14 +62,11 @@ impl<'de> Deserialize<'de> for BooleanSchema {
     }
 }
 
-impl BinarySchema for BooleanSchema {
+impl BinaryCodec for BooleanSchema {
     type Value = bool;
 
     fn length_encoded(&self) -> Length {
         self.bf.length_encoded()
-    }
-    fn encoded_size(&self, _: &Self::Value) -> usize {
-        self.bf.encoded_size(&0)
     }
     fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
     where

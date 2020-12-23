@@ -1,6 +1,6 @@
 //! Implementation of the integer schema
 
-use crate::{BinarySchema, ByteOrder, Error, Length, Result};
+use crate::{BinaryCodec, ByteOrder, Error, Length, Result};
 use byteorder::{WriteBytesExt, BE, LE};
 use serde::{de::Error as _, Deserialize, Deserializer};
 use std::collections::HashMap;
@@ -58,8 +58,17 @@ impl JoinedBitfield {
         Ok(Self { bytes, fields: bfs })
     }
     /// Check if every field is contained in the value.
-    pub fn valid_value(&self, value: &HashMap<String, u64>) -> bool {
-        self.fields.keys().all(|k| value.contains_key(k))
+    pub fn valid_value(&self, value: &HashMap<String, u64>) -> Result<()> {
+        let missing = self
+            .fields
+            .keys()
+            .filter(|k| !value.contains_key(*k))
+            .next();
+        if let Some(field) = missing {
+            Err(Error::NotAField(field.clone()))
+        } else {
+            Ok(())
+        }
     }
     /// Integer schema to encode the value of all bitfields.
     fn integer(&self) -> Integer {
@@ -71,22 +80,17 @@ impl JoinedBitfield {
     }
 }
 
-impl BinarySchema for JoinedBitfield {
+impl BinaryCodec for JoinedBitfield {
     type Value = HashMap<String, u64>;
 
     fn length_encoded(&self) -> Length {
         Length::Fixed(self.bytes)
     }
-    fn encoded_size(&self, _: &Self::Value) -> usize {
-        self.bytes
-    }
     fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt,
     {
-        if !self.valid_value(&value) {
-            return Err(Error::InvalidValue);
-        }
+        self.valid_value(&value)?;
 
         let mut buffer = 0;
         value
@@ -184,14 +188,11 @@ impl Bitfield {
     }
 }
 
-impl BinarySchema for Bitfield {
+impl BinaryCodec for Bitfield {
     type Value = u64;
 
     fn length_encoded(&self) -> Length {
         Length::Fixed(self.bytes)
-    }
-    fn encoded_size(&self, _: &Self::Value) -> usize {
-        self.bytes
     }
     fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
     where
@@ -279,14 +280,11 @@ impl Default for Integer {
     }
 }
 
-impl BinarySchema for Integer {
+impl BinaryCodec for Integer {
     type Value = i64;
 
     fn length_encoded(&self) -> Length {
         Length::Fixed(self.length)
-    }
-    fn encoded_size(&self, _: &Self::Value) -> usize {
-        self.length
     }
     fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
     where
@@ -389,14 +387,11 @@ impl<'de> Deserialize<'de> for IntegerSchema {
     }
 }
 
-impl BinarySchema for IntegerSchema {
+impl BinaryCodec for IntegerSchema {
     type Value = i64;
 
     fn length_encoded(&self) -> Length {
         Length::Fixed(self.length())
-    }
-    fn encoded_size(&self, _: &Self::Value) -> usize {
-        self.length()
     }
     fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
     where

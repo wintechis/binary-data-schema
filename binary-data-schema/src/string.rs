@@ -1,6 +1,6 @@
 //! Implementation of the string schema
 
-use crate::{BinarySchema, Error, IntegerSchema, Length, Result};
+use crate::{BinaryCodec, Error, IntegerSchema, Length, Result};
 use byteorder::WriteBytesExt;
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;
@@ -94,6 +94,33 @@ impl StringSchema {
     pub fn default_char() -> char {
         DEFAULT_CHAR
     }
+    fn encoded_size(&self, value: &str) -> Result<usize> {
+        let size = match self {
+            StringSchema::Fixed(size) => {
+                matches_fixed_len(value, *size)?;
+                *size
+            }
+            StringSchema::LengthEncoded(int) => value.len() + int.length(),
+            StringSchema::EndPattern(pattern) => {
+                contains_end_sequencs(value, pattern)?;
+                value.len() + pattern.len()
+            }
+            StringSchema::LenAndCap {
+                capacity, length, ..
+            } => {
+                exceeds_cap(value, *capacity)?;
+                *capacity + length.length()
+            }
+            StringSchema::PatternAndCap {
+                capacity, pattern, ..
+            } => {
+                exceeds_cap(value, *capacity)?;
+                contains_end_sequencs(value, pattern)?;
+                *capacity + pattern.len()
+            }
+        };
+        Ok(size)
+    }
 }
 
 impl TryFrom<RawString> for StringSchema {
@@ -149,8 +176,8 @@ impl<'de> Deserialize<'de> for StringSchema {
     }
 }
 
-impl BinarySchema for StringSchema {
-    type Value = String;
+impl BinaryCodec for StringSchema {
+    type Value = str;
 
     fn length_encoded(&self) -> Length {
         match self {
@@ -164,25 +191,12 @@ impl BinarySchema for StringSchema {
             } => Length::Fixed(*capacity + pattern.len()),
         }
     }
-    fn encoded_size(&self, value: &Self::Value) -> usize {
-        match self {
-            StringSchema::Fixed(size) => *size,
-            StringSchema::LengthEncoded(int) => value.len() + int.length(),
-            StringSchema::EndPattern(pattern) => value.len() + pattern.len(),
-            StringSchema::LenAndCap {
-                capacity, length, ..
-            } => *capacity + length.length(),
-            StringSchema::PatternAndCap {
-                capacity, pattern, ..
-            } => *capacity + pattern.len(),
-        }
-    }
     fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt,
     {
         let mut target = target;
-        let written = self.encoded_size(value);
+        let written = self.encoded_size(value)?;
         match self {
             StringSchema::Fixed(len) => {
                 matches_fixed_len(value, *len)?;

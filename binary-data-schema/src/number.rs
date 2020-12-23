@@ -1,6 +1,6 @@
 //! Implementation of the number schema
 
-use crate::{BinarySchema, ByteOrder, Error, IntegerSchema, Length, RawIntegerSchema, Result};
+use crate::{BinaryCodec, ByteOrder, Error, IntegerSchema, Length, RawIntegerSchema, Result};
 use byteorder::WriteBytesExt;
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;
@@ -132,7 +132,7 @@ impl<'de> Deserialize<'de> for NumberSchema {
     }
 }
 
-impl BinarySchema for NumberSchema {
+impl BinaryCodec for NumberSchema {
     type Value = f64;
 
     fn length_encoded(&self) -> Length {
@@ -140,13 +140,6 @@ impl BinarySchema for NumberSchema {
             NumberSchema::Integer { integer, .. } => integer.length_encoded(),
             NumberSchema::Float { .. } => Length::Fixed(4),
             NumberSchema::Double { .. } => Length::Fixed(8),
-        }
-    }
-    fn encoded_size(&self, value: &Self::Value) -> usize {
-        match self {
-            NumberSchema::Integer { integer, .. } => integer.encoded_size(&(*value as _)),
-            NumberSchema::Float { .. } => 4,
-            NumberSchema::Double { .. } => 8,
         }
     }
     fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
