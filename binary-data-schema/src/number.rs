@@ -67,22 +67,14 @@ impl NumberSchema {
     /// Apply scale and offset to the value.
     pub fn to_binary_value(&self, value: f64) -> f64 {
         match self {
-            NumberSchema::Integer { scale, offset, .. } => {
-                let res = (value - *offset) / *scale;
-                // println!("to_binary: ({} - {}) / {} = {}", value, *offset, *scale, res);
-                res
-            }
+            NumberSchema::Integer { scale, offset, .. } => (value - *offset) / *scale,
             _ => value,
         }
     }
     /// Apply scale and offset to the value.
     pub fn from_binary_value(&self, value: f64) -> f64 {
         match self {
-            NumberSchema::Integer { scale, offset, .. } => {
-                let res = value * *scale + *offset;
-                // println!("from_binary: {} * {} + {} = {}", value, *scale, *offset, res);
-                res
-            }
+            NumberSchema::Integer { scale, offset, .. } => value * *scale + *offset,
             _ => value,
         }
     }
@@ -128,7 +120,7 @@ impl<'de> Deserialize<'de> for NumberSchema {
         D: Deserializer<'de>,
     {
         let raw = RawNumber::deserialize(deserializer)?;
-        NumberSchema::try_from(raw).map_err(|e| D::Error::custom(e))
+        NumberSchema::try_from(raw).map_err(D::Error::custom)
     }
 }
 

@@ -172,7 +172,7 @@ impl<'de> Deserialize<'de> for StringSchema {
         D: Deserializer<'de>,
     {
         let raw = RawString::deserialize(deserializer)?;
-        StringSchema::try_from(raw).map_err(|e| D::Error::custom(e))
+        StringSchema::try_from(raw).map_err(D::Error::custom)
     }
 }
 
@@ -297,7 +297,7 @@ fn fill_rest<W: io::Write>(target: W, cap: usize, filled: usize, filler: char) -
     let mut c = [0];
     filler.encode_utf8(&mut c);
     for _ in 0..to_fill {
-        target.write(&c)?;
+        target.write_all(&c)?;
     }
     Ok(to_fill)
 }

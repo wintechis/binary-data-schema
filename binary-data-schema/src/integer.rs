@@ -11,7 +11,7 @@ const MAX_INTEGER_SIZE: usize = 8;
 const DEFAULT_LENGTH: usize = 4;
 const DEFAULT_SIGNED: bool = true;
 
-#[derive(Debug, Copy, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) struct RawIntegerSchema {
     #[serde(default)]
@@ -59,11 +59,7 @@ impl JoinedBitfield {
     }
     /// Check if every field is contained in the value.
     pub fn valid_value(&self, value: &HashMap<String, u64>) -> Result<()> {
-        let missing = self
-            .fields
-            .keys()
-            .filter(|k| !value.contains_key(*k))
-            .next();
+        let missing = self.fields.keys().find(|k| !value.contains_key(*k));
         if let Some(field) = missing {
             Err(Error::NotAField(field.clone()))
         } else {
@@ -383,7 +379,7 @@ impl<'de> Deserialize<'de> for IntegerSchema {
         D: Deserializer<'de>,
     {
         let raw = RawIntegerSchema::deserialize(deserializer)?;
-        IntegerSchema::try_from(raw).map_err(|e| D::Error::custom(e))
+        IntegerSchema::try_from(raw).map_err(D::Error::custom)
     }
 }
 

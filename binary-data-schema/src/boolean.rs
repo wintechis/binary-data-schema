@@ -58,7 +58,7 @@ impl<'de> Deserialize<'de> for BooleanSchema {
         D: Deserializer<'de>,
     {
         let raw = RawBoolean::deserialize(deserializer)?;
-        BooleanSchema::try_from(raw).map_err(|e| D::Error::custom(e))
+        BooleanSchema::try_from(raw).map_err(D::Error::custom)
     }
 }
 
