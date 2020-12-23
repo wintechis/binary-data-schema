@@ -1,8 +1,6 @@
 //! Implementation of the Boolean schema
 
-use crate::{
-    BinarySchema, Bitfield, Error, Length, Result,
-};
+use crate::{BinarySchema, Bitfield, Error, Length, Result};
 use byteorder::WriteBytesExt;
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;

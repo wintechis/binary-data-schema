@@ -12,6 +12,8 @@ mod number;
 pub use self::number::*;
 mod boolean;
 pub use self::boolean::*;
+mod string;
+pub use self::string::*;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -38,6 +40,18 @@ pub enum Error {
     InvalidIntegerSchema { bf: Box<Error>, int: Box<Error> },
     #[error("The given value can not be encoded with the given schema.")]
     InvalidValue,
+    #[error("A fixed length string schema requires a 'maxLength' property.")]
+    MissingCapacity,
+    #[error(
+        "The value '{value}' can not be encoded as it contains the end sequence '{sequence}'."
+    )]
+    ContainsEndSequence { value: String, sequence: String },
+    #[error("The value '{value}' has a length of {} but only values of length {fixed} are valid.", value.len())]
+    NotMatchFixedLength { value: String, fixed: usize },
+    #[error("The value '{value}' has a length of {} but only values up to a length of {cap} are valid.", value.len())]
+    ToLongString { value: String, cap: usize },
+    #[error("The default character has to be UTF8 encoded as one byte but '{0}' is encoded in {} bytes", .0.len_utf8())]
+    InvalidDefaultChar(char),
 }
 
 /// Length in bytes when binary serialized.
