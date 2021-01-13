@@ -137,6 +137,13 @@ pub enum DataSchema {
     Integer(IntegerSchema),
     Number(NumberSchema),
     String(StringSchema),
+    Array(Box<ArraySchema>),
+}
+
+impl From<ArraySchema> for DataSchema {
+    fn from(v: ArraySchema) -> Self {
+        DataSchema::Array(Box::new(v))
+    }
 }
 
 impl From<BooleanSchema> for DataSchema {
@@ -172,6 +179,7 @@ impl BinaryCodec for DataSchema {
             DataSchema::Integer(schema) => schema.length_encoded(),
             DataSchema::Number(schema) => schema.length_encoded(),
             DataSchema::String(schema) => schema.length_encoded(),
+            DataSchema::Array(schema) => schema.length_encoded(),
         }
     }
     fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
@@ -207,6 +215,13 @@ impl BinaryCodec for DataSchema {
                 })?;
                 schema.encode(target, value)
             }
+            DataSchema::Array(schema) => {
+                let value = value.as_array().ok_or_else(|| Error::InvalidValue {
+                    value: value.to_string(),
+                    type_: "array",
+                })?;
+                schema.encode(target, &value)
+            }
         }
     }
     fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
@@ -218,6 +233,7 @@ impl BinaryCodec for DataSchema {
             DataSchema::Integer(schema) => schema.encode_value(target, value),
             DataSchema::Number(schema) => schema.encode_value(target, value),
             DataSchema::String(schema) => schema.encode_value(target, value),
+            DataSchema::Array(schema) => schema.encode_value(target, value),
         }
     }
 }
