@@ -16,12 +16,16 @@ mod boolean;
 pub use self::boolean::*;
 mod string;
 pub use self::string::*;
+mod array;
+pub use self::array::*;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Errors from binary serialization.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error(transparent)]
+    Serialization(#[from] serde_json::Error),
     #[error("Encoding a value failed: {0}")]
     WriteFail(#[from] io::Error),
     #[error("Invalid length requested: Maximum allowed is {max} but {requested} where requested")]
@@ -40,7 +44,7 @@ pub enum Error {
     NotSameBytes,
     #[error("Invalid integer schema. Not a bitfield: {bf}; nor an integer: {int}")]
     InvalidIntegerSchema { bf: Box<Error>, int: Box<Error> },
-    #[error("The value '{}' can not be encoded with the a {type_} schema.")]
+    #[error("The value '{}' can not be encoded with a {type_} schema.")]
     InvalidValue { value: String, type_: &'static str },
     #[error("A fixed length string schema requires a 'maxLength' property.")]
     MissingCapacity,
@@ -48,14 +52,30 @@ pub enum Error {
         "The value '{value}' can not be encoded as it contains the end sequence '{sequence}'."
     )]
     ContainsEndSequence { value: String, sequence: String },
-    #[error("The value '{value}' has a length of {} but only values of length {fixed} are valid.", value.len())]
-    NotMatchFixedLength { value: String, fixed: usize },
+    #[error("The value '{value}' has a length of {len} but only values with a length of {fixed} are supported.")]
+    NotMatchFixedLength {
+        value: String,
+        len: usize,
+        fixed: usize,
+    },
     #[error("The value '{value}' has a length of {} but only values up to a length of {cap} are valid.", value.len())]
     ToLongString { value: String, cap: usize },
     #[error("The default character has to be UTF8 encoded as one byte but '{0}' is encoded in {} bytes", .0.len_utf8())]
     InvalidDefaultChar(char),
     #[error("'{0}' is not a field in the schema.")]
     NotAField(String),
+    #[error("A Json object was expected but got: {0}")]
+    NotAnObject(String),
+    #[error("The value '{value}' has a length of {len} but the length encoding can only handle a length of up to {max}.")]
+    ExceededLengthEncoding {
+        value: String,
+        len: usize,
+        max: usize,
+    },
+    #[error("The length of an array must be encoded in some way.")]
+    MissingArrayLength,
+    #[error("There are contrary specifications for a fixed-length array")]
+    InconsitentFixedLength,
 }
 
 /// Length in bytes when binary serialized.
@@ -91,6 +111,10 @@ pub trait BinaryCodec {
     fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt;
+    /// Write the a Json value according to the schema.
+    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
+    where
+        W: io::Write + WriteBytesExt;
 }
 
 #[derive(Debug, Copy, Clone, Deserialize, Eq, PartialEq)]
@@ -107,7 +131,7 @@ impl Default for ByteOrder {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "lowercase")]
 pub enum DataSchema {
     Boolean(BooleanSchema),
     Integer(IntegerSchema),
@@ -183,6 +207,17 @@ impl BinaryCodec for DataSchema {
                 })?;
                 schema.encode(target, value)
             }
+        }
+    }
+    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
+    where
+        W: io::Write + WriteBytesExt,
+    {
+        match self {
+            DataSchema::Boolean(schema) => schema.encode_value(target, value),
+            DataSchema::Integer(schema) => schema.encode_value(target, value),
+            DataSchema::Number(schema) => schema.encode_value(target, value),
+            DataSchema::String(schema) => schema.encode_value(target, value),
         }
     }
 }

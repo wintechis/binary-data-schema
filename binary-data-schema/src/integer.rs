@@ -3,9 +3,26 @@
 use crate::{BinaryCodec, ByteOrder, Error, Length, Result};
 use byteorder::{WriteBytesExt, BE, LE};
 use serde::{de::Error as _, Deserialize, Deserializer};
+use serde_json::{to_string_pretty, Value};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io;
+
+/// Tries to convert a Json object into a value map for a [JoinedBitfield].
+///
+/// Keys with values that can not be represented as `u64` are ignored.
+pub fn value_to_map(value: &Value) -> Result<HashMap<String, u64>> {
+    if let Some(map) = value.as_object() {
+        let map = map
+            .iter()
+            .filter_map(|(k, v)| v.as_u64().map(|i| (k.to_owned(), i)))
+            .collect();
+        Ok(map)
+    } else {
+        let value = to_string_pretty(value)?;
+        Err(Error::NotAnObject(value))
+    }
+}
 
 const MAX_INTEGER_SIZE: usize = 8;
 const DEFAULT_LENGTH: usize = 4;
@@ -96,6 +113,13 @@ impl BinaryCodec for JoinedBitfield {
 
         let int = self.integer();
         int.encode(target, &(buffer as _))
+    }
+    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
+    where
+        W: io::Write + WriteBytesExt,
+    {
+        let map = value_to_map(value)?;
+        self.encode(target, &map)
     }
 }
 
@@ -199,6 +223,19 @@ impl BinaryCodec for Bitfield {
         let int = self.integer();
         int.encode(target, &(buffer as _))
     }
+    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
+    where
+        W: io::Write + WriteBytesExt,
+    {
+        if let Some(value) = value.as_u64() {
+            self.encode(target, &value)
+        } else {
+            Err(Error::InvalidValue {
+                value: value.to_string(),
+                type_: "integer",
+            })
+        }
+    }
 }
 
 impl TryFrom<RawIntegerSchema> for Bitfield {
@@ -264,6 +301,13 @@ impl Integer {
             ..Default::default()
         }
     }
+    pub fn unsigned_byte() -> Self {
+        Self {
+            length: 1,
+            signed: false,
+            ..Default::default()
+        }
+    }
 }
 
 impl Default for Integer {
@@ -298,6 +342,19 @@ impl BinaryCodec for Integer {
 
         Ok(self.length)
     }
+    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
+    where
+        W: io::Write + WriteBytesExt,
+    {
+        if let Some(value) = value.as_i64() {
+            self.encode(target, &value)
+        } else {
+            Err(Error::InvalidValue {
+                value: value.to_string(),
+                type_: "integer",
+            })
+        }
+    }
 }
 
 impl TryFrom<RawIntegerSchema> for Integer {
@@ -330,10 +387,24 @@ impl IntegerSchema {
     pub fn short_int() -> Self {
         Integer::default_short().into()
     }
+    /// Encoded length in bytes.
     pub fn length(&self) -> usize {
         match self {
             IntegerSchema::Integer(Integer { length, .. }) => *length,
             IntegerSchema::Bitfield(Bitfield { bytes, .. }) => *bytes,
+        }
+    }
+    /// The theoretical maximal value that can be encoded.
+    pub fn max_value(&self) -> usize {
+        match self {
+            IntegerSchema::Integer(Integer { length, signed, .. }) => {
+                let mut max = (1 << (length * 8)) - 1;
+                if *signed {
+                    max >>= 1;
+                }
+                max
+            }
+            IntegerSchema::Bitfield(Bitfield { bits, .. }) => (1 << bits) - 1,
         }
     }
 }
@@ -396,6 +467,15 @@ impl BinaryCodec for IntegerSchema {
         match self {
             IntegerSchema::Integer(schema) => schema.encode(target, value),
             IntegerSchema::Bitfield(schema) => schema.encode(target, &(*value as _)),
+        }
+    }
+    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
+    where
+        W: io::Write + WriteBytesExt,
+    {
+        match self {
+            IntegerSchema::Integer(schema) => schema.encode_value(target, value),
+            IntegerSchema::Bitfield(schema) => schema.encode_value(target, value),
         }
     }
 }

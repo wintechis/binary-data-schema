@@ -4,6 +4,7 @@ use crate::{BinaryCodec, Error, IntegerSchema, Length, Result};
 use byteorder::WriteBytesExt;
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;
+use serde_json::Value;
 use std::convert::TryFrom;
 use std::io;
 
@@ -30,6 +31,10 @@ enum LengthEncoding {
         #[serde(default = "LengthEncoding::default_end")]
         sequence: String,
     },
+    /// The encoded string reaches to the end of the data. This is the default
+    /// encoding in order to be compatible to the `octet-stream` encoder of
+    /// `node-wot`.
+    TillEnd,
 }
 
 pub const DEFAULT_END: char = '\0';
@@ -42,9 +47,7 @@ impl LengthEncoding {
 
 impl Default for LengthEncoding {
     fn default() -> Self {
-        LengthEncoding::EndPattern {
-            sequence: DEFAULT_END.to_string(),
-        }
+        LengthEncoding::TillEnd
     }
 }
 
@@ -70,7 +73,7 @@ impl RawString {
     }
 }
 
-/// The number schema describes a numeric value.
+/// The string schema to describe string values.
 #[derive(Debug, Clone)]
 pub enum StringSchema {
     Fixed(usize),
@@ -86,6 +89,7 @@ pub enum StringSchema {
         capacity: usize,
         default_char: char,
     },
+    TillEnd,
 }
 
 pub const DEFAULT_CHAR: char = '\0';
@@ -118,6 +122,7 @@ impl StringSchema {
                 contains_end_sequencs(value, pattern)?;
                 *capacity + pattern.len()
             }
+            StringSchema::TillEnd => value.len(),
         };
         Ok(size)
     }
@@ -127,6 +132,7 @@ impl TryFrom<RawString> for StringSchema {
     type Error = Error;
 
     fn try_from(raw: RawString) -> Result<Self, Self::Error> {
+        println!("tf: raw: {:#?}", raw);
         let default_char = raw.valid_default_char()?;
         match (raw.min_length, raw.max_length) {
             (Some(min), Some(max)) if min == max => return Ok(StringSchema::Fixed(max)),
@@ -140,15 +146,15 @@ impl TryFrom<RawString> for StringSchema {
                     Err(Error::MissingCapacity)
                 }
             }
-            LengthEncoding::ExplicitLength(int) => {
+            LengthEncoding::ExplicitLength(schema) => {
                 if let Some(cap) = raw.max_length {
                     Ok(StringSchema::LenAndCap {
-                        length: int,
+                        length: schema,
                         capacity: cap,
                         default_char,
                     })
                 } else {
-                    Ok(StringSchema::LengthEncoded(int))
+                    Ok(StringSchema::LengthEncoded(schema))
                 }
             }
             LengthEncoding::EndPattern { sequence } => {
@@ -162,6 +168,7 @@ impl TryFrom<RawString> for StringSchema {
                     Ok(StringSchema::EndPattern(sequence))
                 }
             }
+            LengthEncoding::TillEnd => Ok(StringSchema::TillEnd),
         }
     }
 }
@@ -182,7 +189,9 @@ impl BinaryCodec for StringSchema {
     fn length_encoded(&self) -> Length {
         match self {
             StringSchema::Fixed(len) => Length::Fixed(*len),
-            StringSchema::LengthEncoded(_) | StringSchema::EndPattern(_) => Length::Variable,
+            StringSchema::LengthEncoded(_)
+            | StringSchema::EndPattern(_)
+            | StringSchema::TillEnd => Length::Variable,
             StringSchema::LenAndCap {
                 length, capacity, ..
             } => Length::Fixed(*capacity + length.length()),
@@ -254,6 +263,23 @@ impl BinaryCodec for StringSchema {
                 )?;
                 Ok(written)
             }
+            StringSchema::TillEnd => {
+                target.write_all(value.as_bytes())?;
+                Ok(written)
+            }
+        }
+    }
+    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
+    where
+        W: io::Write + WriteBytesExt,
+    {
+        if let Some(value) = value.as_str() {
+            self.encode(target, value)
+        } else {
+            Err(Error::InvalidValue {
+                value: value.to_string(),
+                type_: "string",
+            })
         }
     }
 }
@@ -261,6 +287,7 @@ impl BinaryCodec for StringSchema {
 fn matches_fixed_len(value: &str, len: usize) -> Result<()> {
     if value.len() != len {
         Err(Error::NotMatchFixedLength {
+            len: value.len(),
             value: value.to_owned(),
             fixed: len,
         })
@@ -353,6 +380,8 @@ mod test {
         let schema: StringSchema = from_value(schema)?;
         assert!(matches!(schema, StringSchema::LengthEncoded(_)));
 
+        println!("schema: {:#?}", schema);
+
         let mut buffer = vec![];
         let value = "Hans".to_string();
         assert_eq!(5, schema.encode(&mut buffer, &value)?);
@@ -363,8 +392,10 @@ mod test {
     }
 
     #[test]
-    fn pattern() -> Result<()> {
-        let schema = json!({});
+    fn default_pattern() -> Result<()> {
+        let schema = json!({
+            "lengthEncoding": { "type": "endpattern" }
+        });
         let schema: StringSchema = from_value(schema)?;
         assert!(matches!(schema, StringSchema::EndPattern(_)));
 
@@ -372,6 +403,21 @@ mod test {
         let value = "Hans".to_string();
         assert_eq!(5, schema.encode(&mut buffer, &value)?);
         let expected = [b'H', b'a', b'n', b's', 0x00];
+        assert_eq!(&expected, buffer.as_slice());
+
+        Ok(())
+    }
+
+    #[test]
+    fn default() -> Result<()> {
+        let schema = json!({});
+        let schema: StringSchema = from_value(schema)?;
+        assert!(matches!(schema, StringSchema::TillEnd));
+
+        let mut buffer = vec![];
+        let value = "Hans".to_string();
+        assert_eq!(4, schema.encode(&mut buffer, &value)?);
+        let expected = [b'H', b'a', b'n', b's'];
         assert_eq!(&expected, buffer.as_slice());
 
         Ok(())

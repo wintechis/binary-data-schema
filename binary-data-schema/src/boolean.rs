@@ -4,6 +4,7 @@ use crate::{BinaryCodec, Bitfield, Error, Length, Result};
 use byteorder::WriteBytesExt;
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;
+use serde_json::Value;
 use std::convert::TryFrom;
 use std::io;
 
@@ -76,6 +77,19 @@ impl BinaryCodec for BooleanSchema {
         let written = self.bf.encode(target, &int)?;
 
         Ok(written)
+    }
+    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
+    where
+        W: io::Write + WriteBytesExt,
+    {
+        if let Some(value) = value.as_bool() {
+            self.encode(target, &value)
+        } else {
+            Err(Error::InvalidValue {
+                value: value.to_string(),
+                type_: "boolean",
+            })
+        }
     }
 }
 
