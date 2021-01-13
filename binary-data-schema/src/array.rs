@@ -73,7 +73,7 @@ impl TryFrom<RawArray> for ArraySchema {
 
     fn try_from(raw: RawArray) -> Result<Self, Self::Error> {
         let length = match (raw.min_items, raw.max_items, raw.length_encoding) {
-            (Some(min), Some(max), None) if min == max => LengthEncoding::Fixed {length: max},
+            (Some(min), Some(max), None) if min == max => LengthEncoding::Fixed { length: max },
             (_, _, None) => return Err(Error::MissingArrayLength),
             (_, _, Some(schema)) => LengthEncoding::ExplicitLength(schema),
         };

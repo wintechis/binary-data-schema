@@ -18,6 +18,8 @@ mod string;
 pub use self::string::*;
 mod array;
 pub use self::array::*;
+mod object;
+pub use self::object::*;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -64,6 +66,8 @@ pub enum Error {
     InvalidDefaultChar(char),
     #[error("'{0}' is not a field in the schema.")]
     NotAField(String),
+    #[error("The field '{0}' is not present in the value to encode.")]
+    MissingField(String),
     #[error("A Json object was expected but got: {0}")]
     NotAnObject(String),
     #[error("The value '{value}' has a length of {len} but the length encoding can only handle a length of up to {max}.")]
@@ -76,6 +80,8 @@ pub enum Error {
     MissingArrayLength,
     #[error("There are contrary specifications for a fixed-length array")]
     InconsitentFixedLength,
+    #[error("The position {0} has been used multiple times in the object schema but only bitfields are allowed to share a position.")]
+    InvalidPosition(usize),
 }
 
 /// Length in bytes when binary serialized.
@@ -85,6 +91,12 @@ pub enum Length {
     Fixed(usize),
     /// Varies depending on the value.
     Variable,
+}
+
+impl Length {
+    fn zero() -> Self {
+        Length::Fixed(0)
+    }
 }
 
 impl Add for Length {
@@ -97,6 +109,16 @@ impl Add for Length {
             | (Length::Variable, Length::Fixed(_))
             | (Length::Variable, Length::Variable) => Length::Variable,
         }
+    }
+}
+
+impl std::iter::Sum for Length {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        let mut sum = Length::zero();
+        for len in iter {
+            sum = sum + len;
+        }
+        sum
     }
 }
 

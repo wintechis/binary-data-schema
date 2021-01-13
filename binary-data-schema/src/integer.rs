@@ -3,26 +3,10 @@
 use crate::{BinaryCodec, ByteOrder, Error, Length, Result};
 use byteorder::{WriteBytesExt, BE, LE};
 use serde::{de::Error as _, Deserialize, Deserializer};
-use serde_json::{to_string_pretty, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io;
-
-/// Tries to convert a Json object into a value map for a [JoinedBitfield].
-///
-/// Keys with values that can not be represented as `u64` are ignored.
-pub fn value_to_map(value: &Value) -> Result<HashMap<String, u64>> {
-    if let Some(map) = value.as_object() {
-        let map = map
-            .iter()
-            .filter_map(|(k, v)| v.as_u64().map(|i| (k.to_owned(), i)))
-            .collect();
-        Ok(map)
-    } else {
-        let value = to_string_pretty(value)?;
-        Err(Error::NotAnObject(value))
-    }
-}
 
 const MAX_INTEGER_SIZE: usize = 8;
 const DEFAULT_LENGTH: usize = 4;
@@ -74,15 +58,6 @@ impl JoinedBitfield {
 
         Ok(Self { bytes, fields: bfs })
     }
-    /// Check if every field is contained in the value.
-    pub fn valid_value(&self, value: &HashMap<String, u64>) -> Result<()> {
-        let missing = self.fields.keys().find(|k| !value.contains_key(*k));
-        if let Some(field) = missing {
-            Err(Error::NotAField(field.clone()))
-        } else {
-            Ok(())
-        }
-    }
     /// Integer schema to encode the value of all bitfields.
     fn integer(&self) -> Integer {
         self.fields
@@ -94,7 +69,7 @@ impl JoinedBitfield {
 }
 
 impl BinaryCodec for JoinedBitfield {
-    type Value = HashMap<String, u64>;
+    type Value = Value;
 
     fn length_encoded(&self) -> Length {
         Length::Fixed(self.bytes)
@@ -103,13 +78,17 @@ impl BinaryCodec for JoinedBitfield {
     where
         W: io::Write + WriteBytesExt,
     {
-        self.valid_value(&value)?;
-
         let mut buffer = 0;
-        value
-            .iter()
-            .filter_map(|(k, v)| self.fields.get(k).map(|bf| (bf, v)))
-            .for_each(|(bf, v)| bf.write(*v, &mut buffer));
+        for (name, bf) in self.fields.iter() {
+            let value = value
+                .get(name)
+                .ok_or_else(|| Error::MissingField(name.clone()))?;
+            let value = value.as_u64().ok_or_else(|| Error::InvalidValue {
+                value: value.to_string(),
+                type_: "integer",
+            })?;
+            bf.write(value, &mut buffer);
+        }
 
         let int = self.integer();
         int.encode(target, &(buffer as _))
@@ -118,8 +97,7 @@ impl BinaryCodec for JoinedBitfield {
     where
         W: io::Write + WriteBytesExt,
     {
-        let map = value_to_map(value)?;
-        self.encode(target, &map)
+        self.encode(target, value)
     }
 }
 
