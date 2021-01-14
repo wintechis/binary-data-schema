@@ -1,6 +1,6 @@
 //! Implementation of the string schema
 
-use crate::{BinaryCodec, DataSchema, Error, IntegerSchema, JoinedBitfield, Length, Result};
+use crate::{DataSchema, Encoder, Error, IntegerSchema, JoinedBitfield, Result};
 use byteorder::WriteBytesExt;
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;
@@ -29,22 +29,8 @@ pub enum PropertySchema {
     Merged(JoinedBitfield),
 }
 
-impl BinaryCodec for PropertySchema {
-    type Value = Value;
-
-    fn length_encoded(&self) -> Length {
-        match self {
-            PropertySchema::Simple { schema, .. } => schema.length_encoded(),
-            PropertySchema::Merged(schema) => schema.length_encoded(),
-        }
-    }
-    fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
-    where
-        W: io::Write + WriteBytesExt,
-    {
-        self.encode_value(target, value)
-    }
-    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
+impl Encoder for PropertySchema {
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt,
     {
@@ -53,9 +39,9 @@ impl BinaryCodec for PropertySchema {
                 let value = value
                     .get(name)
                     .ok_or_else(|| Error::MissingField(name.clone()))?;
-                schema.encode_value(target, value)
+                schema.encode(target, value)
             }
-            PropertySchema::Merged(schema) => schema.encode_value(target, value),
+            PropertySchema::Merged(schema) => schema.encode(target, value),
         }
     }
 }
@@ -86,7 +72,7 @@ impl TryFrom<RawObject> for ObjectSchema {
     fn try_from(raw: RawObject) -> Result<Self, Self::Error> {
         let mut ordered = HashMap::with_capacity(raw.properties.len());
         raw.properties.into_iter().for_each(|(name, raw)| {
-            let bucket = ordered.entry(raw.position).or_insert_with(|| vec![]);
+            let bucket = ordered.entry(raw.position).or_insert_with(Vec::new);
             bucket.push((name, raw.schema));
         });
         let mut properties = Vec::with_capacity(ordered.len());
@@ -129,38 +115,23 @@ impl<'de> Deserialize<'de> for ObjectSchema {
     }
 }
 
-impl BinaryCodec for ObjectSchema {
-    type Value = Value;
-
-    fn length_encoded(&self) -> Length {
-        self.properties
-            .iter()
-            .map(|p| p.schema.length_encoded())
-            .sum()
-    }
-    fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
+impl Encoder for ObjectSchema {
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt,
     {
-        let mut target = target;
         let mut written = 0;
         for p in self.properties.iter() {
-            written += p.schema.encode_value(&mut target, &value)?;
+            written += p.schema.encode(target, &value)?;
         }
 
         Ok(written)
-    }
-    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
-    where
-        W: io::Write + WriteBytesExt,
-    {
-        self.encode(target, value)
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use anyhow::Result;
-    use serde_json::{from_value, json};
+    // use super::*;
+    // use anyhow::Result;
+    // use serde_json::{from_value, json};
 }

@@ -1,6 +1,6 @@
 //! Implementation of the string schema
 
-use crate::{BinaryCodec, DataSchema, Error, IntegerSchema, Length, Result};
+use crate::{DataSchema, Encoder, Error, IntegerSchema, Result};
 use byteorder::WriteBytesExt;
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;
@@ -95,51 +95,33 @@ impl<'de> Deserialize<'de> for ArraySchema {
     }
 }
 
-impl BinaryCodec for ArraySchema {
-    type Value = [Value];
-
-    fn length_encoded(&self) -> Length {
-        match self.length {
-            LengthEncoding::Fixed { length } => Length::Fixed(length),
-            LengthEncoding::ExplicitLength(_) => Length::Variable,
-        }
-    }
-    fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
+impl Encoder for ArraySchema {
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt,
     {
-        let mut target = target;
+        let value = value.as_array().ok_or_else(|| Error::InvalidValue {
+            value: value.to_string(),
+            type_: "array",
+        })?;
         self.valid_slice(value)?;
 
         match &self.length {
             LengthEncoding::Fixed { .. } => {
                 let mut written = 0;
                 for v in value.iter() {
-                    written += self.items.encode_value(&mut target, v)?;
+                    written += self.items.encode(target, v)?;
                 }
                 Ok(written)
             }
             LengthEncoding::ExplicitLength(len_schema) => {
-                let len = value.len() as _;
-                let mut written = len_schema.encode(&mut target, &len)?;
+                let len = value.len().into();
+                let mut written = len_schema.encode(target, &len)?;
                 for v in value.iter() {
-                    written += self.items.encode_value(&mut target, v)?;
+                    written += self.items.encode(target, v)?;
                 }
                 Ok(written)
             }
-        }
-    }
-    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
-    where
-        W: io::Write + WriteBytesExt,
-    {
-        if let Some(array) = value.as_array() {
-            self.encode(target, array)
-        } else {
-            Err(Error::InvalidValue {
-                value: value.to_string(),
-                type_: "array",
-            })
         }
     }
 }
@@ -182,7 +164,7 @@ mod test {
 
         let value = json!([false, true]);
         let mut buffer = vec![];
-        assert_eq!(2, schema.encode_value(&mut buffer, &value)?);
+        assert_eq!(2, schema.encode(&mut buffer, &value)?);
         let expected: [u8; 2] = [0, 1];
         assert_eq!(&expected, buffer.as_slice());
 
@@ -204,7 +186,7 @@ mod test {
 
         let value = json!([false, true]);
         let mut buffer = vec![];
-        assert_eq!(3, schema.encode_value(&mut buffer, &value)?);
+        assert_eq!(3, schema.encode(&mut buffer, &value)?);
         let expected: [u8; 3] = [2, 0, 1];
         assert_eq!(&expected, buffer.as_slice());
 

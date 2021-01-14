@@ -1,6 +1,6 @@
 //! Implementation of the string schema
 
-use crate::{BinaryCodec, Error, IntegerSchema, Length, Result};
+use crate::{Encoder, Error, IntegerSchema, Result};
 use byteorder::WriteBytesExt;
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;
@@ -183,28 +183,15 @@ impl<'de> Deserialize<'de> for StringSchema {
     }
 }
 
-impl BinaryCodec for StringSchema {
-    type Value = str;
-
-    fn length_encoded(&self) -> Length {
-        match self {
-            StringSchema::Fixed(len) => Length::Fixed(*len),
-            StringSchema::LengthEncoded(_)
-            | StringSchema::EndPattern(_)
-            | StringSchema::TillEnd => Length::Variable,
-            StringSchema::LenAndCap {
-                length, capacity, ..
-            } => Length::Fixed(*capacity + length.length()),
-            StringSchema::PatternAndCap {
-                pattern, capacity, ..
-            } => Length::Fixed(*capacity + pattern.len()),
-        }
-    }
-    fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
+impl Encoder for StringSchema {
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt,
     {
-        let mut target = target;
+        let value = value.as_str().ok_or_else(|| Error::InvalidValue {
+            value: value.to_string(),
+            type_: "string",
+        })?;
         let written = self.encoded_size(value)?;
         match self {
             StringSchema::Fixed(len) => {
@@ -214,7 +201,7 @@ impl BinaryCodec for StringSchema {
             }
             StringSchema::LengthEncoded(int) => {
                 let len = value.len();
-                int.encode(&mut target, &(len as _))?;
+                int.encode(target, &len.into())?;
                 target.write_all(value.as_bytes())?;
                 Ok(written)
             }
@@ -233,7 +220,7 @@ impl BinaryCodec for StringSchema {
                 let len_value = value.len();
                 let capacity = *capacity;
                 exceeds_cap(value, capacity)?;
-                length.encode(&mut target, &(len_value as _))?;
+                length.encode(target, &len_value.into())?;
                 target.write_all(value.as_bytes())?;
                 fill_rest(
                     target,
@@ -267,19 +254,6 @@ impl BinaryCodec for StringSchema {
                 target.write_all(value.as_bytes())?;
                 Ok(written)
             }
-        }
-    }
-    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
-    where
-        W: io::Write + WriteBytesExt,
-    {
-        if let Some(value) = value.as_str() {
-            self.encode(target, value)
-        } else {
-            Err(Error::InvalidValue {
-                value: value.to_string(),
-                type_: "string",
-            })
         }
     }
 }
@@ -351,10 +325,12 @@ mod test {
 
         let mut buffer = vec![];
         let value = "Hans".to_string();
-        assert_eq!(4, schema.encode(&mut buffer, &value)?);
+        let json: Value = value.clone().into();
+        assert_eq!(4, schema.encode(&mut buffer, &json)?);
         assert_eq!(value.as_bytes(), buffer.as_slice());
         let invalid = "Berta".to_string();
-        assert!(schema.encode(&mut buffer, &invalid).is_err());
+        let invalid_json: Value = invalid.clone().into();
+        assert!(schema.encode(&mut buffer, &invalid_json).is_err());
 
         let schema = json!({
             "maxLength": 5,
@@ -362,8 +338,9 @@ mod test {
         });
         let schema: StringSchema = from_value(schema)?;
         let value = invalid;
+        let json = invalid_json;
         buffer.clear();
-        assert_eq!(5, schema.encode(&mut buffer, &value)?);
+        assert_eq!(5, schema.encode(&mut buffer, &json)?);
         assert_eq!(value.as_bytes(), buffer.as_slice());
 
         Ok(())
@@ -384,7 +361,8 @@ mod test {
 
         let mut buffer = vec![];
         let value = "Hans".to_string();
-        assert_eq!(5, schema.encode(&mut buffer, &value)?);
+        let json: Value = value.clone().into();
+        assert_eq!(5, schema.encode(&mut buffer, &json)?);
         let expected = [4, b'H', b'a', b'n', b's'];
         assert_eq!(&expected, buffer.as_slice());
 
@@ -401,7 +379,8 @@ mod test {
 
         let mut buffer = vec![];
         let value = "Hans".to_string();
-        assert_eq!(5, schema.encode(&mut buffer, &value)?);
+        let json: Value = value.clone().into();
+        assert_eq!(5, schema.encode(&mut buffer, &json)?);
         let expected = [b'H', b'a', b'n', b's', 0x00];
         assert_eq!(&expected, buffer.as_slice());
 
@@ -416,7 +395,8 @@ mod test {
 
         let mut buffer = vec![];
         let value = "Hans".to_string();
-        assert_eq!(4, schema.encode(&mut buffer, &value)?);
+        let json: Value = value.clone().into();
+        assert_eq!(4, schema.encode(&mut buffer, &json)?);
         let expected = [b'H', b'a', b'n', b's'];
         assert_eq!(&expected, buffer.as_slice());
 
@@ -436,8 +416,9 @@ mod test {
 
         let mut buffer = vec![];
         let value = "Hans".to_string();
+        let json: Value = value.clone().into();
         // ß is UTF8 encoded as the two bytes `0xC3_9F`
-        assert_eq!(6, schema.encode(&mut buffer, &value)?);
+        assert_eq!(6, schema.encode(&mut buffer, &json)?);
         let expected = [b'H', b'a', b'n', b's', 0xC3, 0x9F];
         assert_eq!(&expected, buffer.as_slice());
 
@@ -459,7 +440,8 @@ mod test {
 
         let mut buffer = vec![];
         let value = "Hans".to_string();
-        assert_eq!(12, schema.encode(&mut buffer, &value)?);
+        let json: Value = value.clone().into();
+        assert_eq!(12, schema.encode(&mut buffer, &json)?);
         let expected: [u8; 12] = [
             0x04, 0x00, b'H', b'a', b'n', b's', 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
@@ -493,7 +475,8 @@ mod test {
 
         let mut buffer = vec![];
         let value = "Hans".to_string();
-        assert_eq!(11, schema.encode(&mut buffer, &value)?);
+        let json: Value = value.clone().into();
+        assert_eq!(11, schema.encode(&mut buffer, &json)?);
         let expected: [u8; 11] = [
             b'H', b'a', b'n', b's', b'?', b'!', b'!', b'!', b'!', b'!', b'!',
         ];

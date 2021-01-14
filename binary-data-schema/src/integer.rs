@@ -1,6 +1,6 @@
 //! Implementation of the integer schema
 
-use crate::{BinaryCodec, ByteOrder, Error, Length, Result};
+use crate::{ByteOrder, Encoder, Error, Result};
 use byteorder::{WriteBytesExt, BE, LE};
 use serde::{de::Error as _, Deserialize, Deserializer};
 use serde_json::Value;
@@ -68,13 +68,8 @@ impl JoinedBitfield {
     }
 }
 
-impl BinaryCodec for JoinedBitfield {
-    type Value = Value;
-
-    fn length_encoded(&self) -> Length {
-        Length::Fixed(self.bytes)
-    }
-    fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
+impl Encoder for JoinedBitfield {
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt,
     {
@@ -91,13 +86,7 @@ impl BinaryCodec for JoinedBitfield {
         }
 
         let int = self.integer();
-        int.encode(target, &(buffer as _))
-    }
-    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
-    where
-        W: io::Write + WriteBytesExt,
-    {
-        self.encode(target, value)
+        int.encode(target, &buffer.into())
     }
 }
 
@@ -186,33 +175,19 @@ impl Bitfield {
     }
 }
 
-impl BinaryCodec for Bitfield {
-    type Value = u64;
-
-    fn length_encoded(&self) -> Length {
-        Length::Fixed(self.bytes)
-    }
-    fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
+impl Encoder for Bitfield {
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt,
     {
+        let value = value.as_u64().ok_or_else(|| Error::InvalidValue {
+            value: value.to_string(),
+            type_: "integer",
+        })?;
         let mut buffer = 0;
-        self.write(*value, &mut buffer);
+        self.write(value, &mut buffer);
         let int = self.integer();
-        int.encode(target, &(buffer as _))
-    }
-    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
-    where
-        W: io::Write + WriteBytesExt,
-    {
-        if let Some(value) = value.as_u64() {
-            self.encode(target, &value)
-        } else {
-            Err(Error::InvalidValue {
-                value: value.to_string(),
-                type_: "integer",
-            })
-        }
+        int.encode(target, &buffer.into())
     }
 }
 
@@ -298,40 +273,23 @@ impl Default for Integer {
     }
 }
 
-impl BinaryCodec for Integer {
-    type Value = i64;
-
-    fn length_encoded(&self) -> Length {
-        Length::Fixed(self.length)
-    }
-    fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
+impl Encoder for Integer {
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt,
     {
-        let mut target = target;
+        let value = value.as_i64().ok_or_else(|| Error::InvalidValue {
+            value: value.to_string(),
+            type_: "integer",
+        })?;
         match (self.byteorder, self.signed) {
-            (ByteOrder::BigEndian, true) => target.write_int::<BE>(*value, self.length)?,
-            (ByteOrder::BigEndian, false) => target.write_uint::<BE>(*value as _, self.length)?,
-            (ByteOrder::LittleEndian, true) => target.write_int::<LE>(*value, self.length)?,
-            (ByteOrder::LittleEndian, false) => {
-                target.write_uint::<LE>(*value as _, self.length)?
-            }
+            (ByteOrder::BigEndian, true) => target.write_int::<BE>(value, self.length)?,
+            (ByteOrder::BigEndian, false) => target.write_uint::<BE>(value as _, self.length)?,
+            (ByteOrder::LittleEndian, true) => target.write_int::<LE>(value, self.length)?,
+            (ByteOrder::LittleEndian, false) => target.write_uint::<LE>(value as _, self.length)?,
         };
 
         Ok(self.length)
-    }
-    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
-    where
-        W: io::Write + WriteBytesExt,
-    {
-        if let Some(value) = value.as_i64() {
-            self.encode(target, &value)
-        } else {
-            Err(Error::InvalidValue {
-                value: value.to_string(),
-                type_: "integer",
-            })
-        }
     }
 }
 
@@ -432,28 +390,14 @@ impl<'de> Deserialize<'de> for IntegerSchema {
     }
 }
 
-impl BinaryCodec for IntegerSchema {
-    type Value = i64;
-
-    fn length_encoded(&self) -> Length {
-        Length::Fixed(self.length())
-    }
-    fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
+impl Encoder for IntegerSchema {
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt,
     {
         match self {
             IntegerSchema::Integer(schema) => schema.encode(target, value),
-            IntegerSchema::Bitfield(schema) => schema.encode(target, &(*value as _)),
-        }
-    }
-    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
-    where
-        W: io::Write + WriteBytesExt,
-    {
-        match self {
-            IntegerSchema::Integer(schema) => schema.encode_value(target, value),
-            IntegerSchema::Bitfield(schema) => schema.encode_value(target, value),
+            IntegerSchema::Bitfield(schema) => schema.encode(target, value),
         }
     }
 }
@@ -471,13 +415,14 @@ mod test {
         let schema_lsb = json!({"byteorder": "littleendian"});
         let schema_lsb: IntegerSchema = from_value(schema_lsb)?;
         let value: i32 = 0x1234_5678;
+        let json: Value = value.into();
         let mut buffer = [0; 4];
 
-        assert_eq!(4, schema_msb.encode(buffer.as_mut(), &(value as _))?);
+        assert_eq!(4, schema_msb.encode(&mut buffer.as_mut(), &json)?);
         let buf_value = i32::from_be_bytes(buffer);
         assert_eq!(value, buf_value);
 
-        assert_eq!(4, schema_lsb.encode(buffer.as_mut(), &(value as _))?);
+        assert_eq!(4, schema_lsb.encode(&mut buffer.as_mut(), &json)?);
         let buf_value = i32::from_le_bytes(buffer);
         assert_eq!(value, buf_value);
 
@@ -498,12 +443,13 @@ mod test {
         });
         let schema_lsb: IntegerSchema = from_value(schema)?;
         let value: i64 = 0x123456;
+        let json: Value = value.into();
         let mut buffer: Vec<u8> = vec![];
 
-        assert_eq!(3, schema_msb.encode(&mut buffer, &(value))?);
+        assert_eq!(3, schema_msb.encode(&mut buffer, &json)?);
         assert!(matches!(buffer.as_slice(), [0x12, 0x34, 0x56, ..]));
 
-        assert_eq!(3, schema_lsb.encode(&mut buffer, &(value))?);
+        assert_eq!(3, schema_lsb.encode(&mut buffer, &json)?);
         assert!(matches!(
             buffer.as_slice(),
             [0x12, 0x34, 0x56, 0x56, 0x34, 0x12, ..]

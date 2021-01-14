@@ -1,6 +1,6 @@
 //! Implementation of the number schema
 
-use crate::{BinaryCodec, ByteOrder, Error, IntegerSchema, Length, RawIntegerSchema, Result};
+use crate::{ByteOrder, Encoder, Error, IntegerSchema, RawIntegerSchema, Result};
 use byteorder::WriteBytesExt;
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;
@@ -66,10 +66,10 @@ impl NumberSchema {
         }
     }
     /// Apply scale and offset to the value.
-    pub fn to_binary_value(&self, value: f64) -> f64 {
+    pub fn to_binary_value(&self, value: f64) -> i64 {
         match self {
-            NumberSchema::Integer { scale, offset, .. } => (value - *offset) / *scale,
-            _ => value,
+            NumberSchema::Integer { scale, offset, .. } => ((value - *offset) / *scale) as _,
+            _ => value as _,
         }
     }
     /// Apply scale and offset to the value.
@@ -125,28 +125,22 @@ impl<'de> Deserialize<'de> for NumberSchema {
     }
 }
 
-impl BinaryCodec for NumberSchema {
-    type Value = f64;
-
-    fn length_encoded(&self) -> Length {
-        match self {
-            NumberSchema::Integer { integer, .. } => integer.length_encoded(),
-            NumberSchema::Float { .. } => Length::Fixed(4),
-            NumberSchema::Double { .. } => Length::Fixed(8),
-        }
-    }
-    fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
+impl Encoder for NumberSchema {
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt,
     {
-        let mut target = target;
+        let value = value.as_f64().ok_or_else(|| Error::InvalidValue {
+            value: value.to_string(),
+            type_: "number",
+        })?;
         let length = match self {
             NumberSchema::Integer { integer, .. } => {
-                let value = self.to_binary_value(*value) as _;
+                let value = self.to_binary_value(value).into();
                 integer.encode(target, &value)?
             }
             NumberSchema::Float { byteorder } => {
-                let value = *value as f32;
+                let value = value as f32;
                 let bytes = if *byteorder == ByteOrder::BigEndian {
                     value.to_be_bytes()
                 } else {
@@ -156,7 +150,7 @@ impl BinaryCodec for NumberSchema {
                 4
             }
             NumberSchema::Double { byteorder } => {
-                let value = *value;
+                let value = value;
                 let bytes = if *byteorder == ByteOrder::BigEndian {
                     value.to_be_bytes()
                 } else {
@@ -168,19 +162,6 @@ impl BinaryCodec for NumberSchema {
         };
 
         Ok(length)
-    }
-    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
-    where
-        W: io::Write + WriteBytesExt,
-    {
-        if let Some(value) = value.as_f64() {
-            self.encode(target, &value)
-        } else {
-            Err(Error::InvalidValue {
-                value: value.to_string(),
-                type_: "number",
-            })
-        }
     }
 }
 
@@ -215,8 +196,12 @@ mod test {
         assert!(from_value::<NumberSchema>(schema).is_err());
 
         let value = 22.5;
+        let json: Value = value.into();
         let value_as_bin = 1250_f64;
-        assert!(eq_floaf(value_as_bin, number2int.to_binary_value(value)));
+        assert!(eq_floaf(
+            value_as_bin,
+            number2int.to_binary_value(value) as f64
+        ));
         let value_int_le = (value_as_bin as i16).to_le_bytes();
         let value_float_be = (value as f32).to_be_bytes();
         let value_double_le = value.to_le_bytes();
@@ -228,11 +213,11 @@ mod test {
             .collect();
 
         let mut buffer: Vec<u8> = vec![];
-        assert_eq!(2, number2int.encode(&mut buffer, &value)?);
+        assert_eq!(2, number2int.encode(&mut buffer, &json)?);
         assert_eq!(2, buffer.len());
-        assert_eq!(4, number2float.encode(&mut buffer, &value)?);
+        assert_eq!(4, number2float.encode(&mut buffer, &json)?);
         assert_eq!(2 + 4, buffer.len());
-        assert_eq!(8, number2double.encode(&mut buffer, &value)?);
+        assert_eq!(8, number2double.encode(&mut buffer, &json)?);
         assert_eq!(2 + 4 + 8, buffer.len());
 
         assert_eq!(buffer, expected);
@@ -252,14 +237,16 @@ mod test {
         });
         let voltage = from_value::<NumberSchema>(schema)?;
         let value1 = 1.6;
+        let json1: Value = value1.into();
         let value2 = 3.0;
+        let json2: Value = value2.into();
         let mut buffer = [0; 2];
 
-        assert_eq!(2, voltage.encode(buffer.as_mut(), &value1)?);
+        assert_eq!(2, voltage.encode(&mut buffer.as_mut(), &json1)?);
         let res = u16::from_be_bytes(buffer);
         assert_eq!(0, res);
 
-        assert_eq!(2, voltage.encode(buffer.as_mut(), &value2)?);
+        assert_eq!(2, voltage.encode(&mut buffer.as_mut(), &json2)?);
         let res = u16::from_be_bytes(buffer);
         let diff = 1400 - ((res >> 5) as i16);
         assert!(diff < 3 && diff > -3);

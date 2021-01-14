@@ -1,6 +1,6 @@
 //! Implementation of the Boolean schema
 
-use crate::{BinaryCodec, Bitfield, Error, Length, Result};
+use crate::{Bitfield, Encoder, Error, Result};
 use byteorder::WriteBytesExt;
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;
@@ -63,33 +63,19 @@ impl<'de> Deserialize<'de> for BooleanSchema {
     }
 }
 
-impl BinaryCodec for BooleanSchema {
-    type Value = bool;
-
-    fn length_encoded(&self) -> Length {
-        self.bf.length_encoded()
-    }
-    fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
+impl Encoder for BooleanSchema {
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt,
     {
-        let int = if *value { 1 } else { 0 };
-        let written = self.bf.encode(target, &int)?;
+        let value = value.as_bool().ok_or_else(|| Error::InvalidValue {
+            value: value.to_string(),
+            type_: "boolean",
+        })?;
+        let int = if value { 1 } else { 0 };
+        let written = self.bf.encode(target, &int.into())?;
 
         Ok(written)
-    }
-    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
-    where
-        W: io::Write + WriteBytesExt,
-    {
-        if let Some(value) = value.as_bool() {
-            self.encode(target, &value)
-        } else {
-            Err(Error::InvalidValue {
-                value: value.to_string(),
-                type_: "boolean",
-            })
-        }
     }
 }
 
@@ -104,7 +90,7 @@ mod test {
         let schema = json!({});
         let b = from_value::<BooleanSchema>(schema)?;
         let mut buf = [0];
-        assert_eq!(1, b.encode(buf.as_mut(), &true)?);
+        assert_eq!(1, b.encode(&mut buf.as_mut(), &json!(true))?);
         assert_eq!(1, buf[0]);
 
         Ok(())
@@ -118,10 +104,10 @@ mod test {
         });
         let b = from_value::<BooleanSchema>(schema)?;
         let mut buf = [0, 0];
-        assert_eq!(2, b.encode(buf.as_mut(), &true)?);
+        assert_eq!(2, b.encode(&mut buf.as_mut(), &json!(true))?);
         assert_eq!(1 << 3, buf[0]);
         assert_eq!(0, buf[1]);
-        assert_eq!(2, b.encode(buf.as_mut(), &false)?);
+        assert_eq!(2, b.encode(&mut buf.as_mut(), &json!(false))?);
         assert_eq!(0, buf[0]);
         assert_eq!(0, buf[1]);
 

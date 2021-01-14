@@ -6,7 +6,6 @@ use byteorder::WriteBytesExt;
 use serde::Deserialize;
 use serde_json::Value;
 use std::io;
-use std::ops::Add;
 
 mod integer;
 pub use self::integer::*;
@@ -46,7 +45,7 @@ pub enum Error {
     NotSameBytes,
     #[error("Invalid integer schema. Not a bitfield: {bf}; nor an integer: {int}")]
     InvalidIntegerSchema { bf: Box<Error>, int: Box<Error> },
-    #[error("The value '{}' can not be encoded with a {type_} schema.")]
+    #[error("The value '{value}' can not be encoded with a {type_} schema.")]
     InvalidValue { value: String, type_: &'static str },
     #[error("A fixed length string schema requires a 'maxLength' property.")]
     MissingCapacity,
@@ -84,57 +83,10 @@ pub enum Error {
     InvalidPosition(usize),
 }
 
-/// Length in bytes when binary serialized.
-#[derive(Debug, Clone, Copy)]
-pub enum Length {
-    /// Always fixed.
-    Fixed(usize),
-    /// Varies depending on the value.
-    Variable,
-}
-
-impl Length {
-    fn zero() -> Self {
-        Length::Fixed(0)
-    }
-}
-
-impl Add for Length {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        match (self, rhs) {
-            (Length::Fixed(lhs), Length::Fixed(rhs)) => Length::Fixed(lhs + rhs),
-            (Length::Fixed(_), Length::Variable)
-            | (Length::Variable, Length::Fixed(_))
-            | (Length::Variable, Length::Variable) => Length::Variable,
-        }
-    }
-}
-
-impl std::iter::Sum for Length {
-    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        let mut sum = Length::zero();
-        for len in iter {
-            sum = sum + len;
-        }
-        sum
-    }
-}
-
 /// A schema to serialize a value to bytes.
-pub trait BinaryCodec {
-    /// The type of values that can be serialized.
-    type Value: ?Sized;
-
-    /// General length a serialization of this schema.
-    fn length_encoded(&self) -> Length;
-    /// Write the value according to the schema.
-    fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
-    where
-        W: io::Write + WriteBytesExt;
-    /// Write the a Json value according to the schema.
-    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
+pub trait Encoder {
+    /// Write a Json value according to the schema.
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt;
 }
@@ -192,70 +144,17 @@ impl From<StringSchema> for DataSchema {
     }
 }
 
-impl BinaryCodec for DataSchema {
-    type Value = Value;
-
-    fn length_encoded(&self) -> Length {
-        match self {
-            DataSchema::Boolean(schema) => schema.length_encoded(),
-            DataSchema::Integer(schema) => schema.length_encoded(),
-            DataSchema::Number(schema) => schema.length_encoded(),
-            DataSchema::String(schema) => schema.length_encoded(),
-            DataSchema::Array(schema) => schema.length_encoded(),
-        }
-    }
-    fn encode<W>(&self, target: W, value: &Self::Value) -> Result<usize>
+impl Encoder for DataSchema {
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt,
     {
         match self {
-            DataSchema::Boolean(schema) => {
-                let value = value.as_bool().ok_or_else(|| Error::InvalidValue {
-                    value: value.to_string(),
-                    type_: "boolean",
-                })?;
-                schema.encode(target, &value)
-            }
-            DataSchema::Integer(schema) => {
-                let value = value.as_i64().ok_or_else(|| Error::InvalidValue {
-                    value: value.to_string(),
-                    type_: "integer",
-                })?;
-                schema.encode(target, &value)
-            }
-            DataSchema::Number(schema) => {
-                let value = value.as_f64().ok_or_else(|| Error::InvalidValue {
-                    value: value.to_string(),
-                    type_: "number",
-                })?;
-                schema.encode(target, &value)
-            }
-            DataSchema::String(schema) => {
-                let value = value.as_str().ok_or_else(|| Error::InvalidValue {
-                    value: value.to_string(),
-                    type_: "string",
-                })?;
-                schema.encode(target, value)
-            }
-            DataSchema::Array(schema) => {
-                let value = value.as_array().ok_or_else(|| Error::InvalidValue {
-                    value: value.to_string(),
-                    type_: "array",
-                })?;
-                schema.encode(target, &value)
-            }
-        }
-    }
-    fn encode_value<W>(&self, target: W, value: &Value) -> Result<usize>
-    where
-        W: io::Write + WriteBytesExt,
-    {
-        match self {
-            DataSchema::Boolean(schema) => schema.encode_value(target, value),
-            DataSchema::Integer(schema) => schema.encode_value(target, value),
-            DataSchema::Number(schema) => schema.encode_value(target, value),
-            DataSchema::String(schema) => schema.encode_value(target, value),
-            DataSchema::Array(schema) => schema.encode_value(target, value),
+            DataSchema::Boolean(schema) => schema.encode(target, value),
+            DataSchema::Integer(schema) => schema.encode(target, value),
+            DataSchema::Number(schema) => schema.encode(target, value),
+            DataSchema::String(schema) => schema.encode(target, value),
+            DataSchema::Array(schema) => schema.encode(target, value),
         }
     }
 }
