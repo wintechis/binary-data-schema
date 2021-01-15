@@ -1,7 +1,7 @@
 //! Implementation of the string schema
 
-use crate::{DataSchema, Encoder, Error, IntegerSchema, Result};
-use byteorder::WriteBytesExt;
+use crate::{DataSchema, Decoder, Encoder, Error, IntegerSchema, Result};
+use byteorder::{ReadBytesExt, WriteBytesExt};
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;
 use serde_json::Value;
@@ -106,23 +106,36 @@ impl Encoder for ArraySchema {
         })?;
         self.valid_slice(value)?;
 
-        match &self.length {
-            LengthEncoding::Fixed { .. } => {
-                let mut written = 0;
-                for v in value.iter() {
-                    written += self.items.encode(target, v)?;
-                }
-                Ok(written)
-            }
+        let mut written = match &self.length {
+            LengthEncoding::Fixed { .. } => 0,
             LengthEncoding::ExplicitLength(len_schema) => {
                 let len = value.len().into();
-                let mut written = len_schema.encode(target, &len)?;
-                for v in value.iter() {
-                    written += self.items.encode(target, v)?;
-                }
-                Ok(written)
+                len_schema.encode(target, &len)?
             }
+        };
+        for v in value.iter() {
+            written += self.items.encode(target, v)?;
         }
+        Ok(written)
+    }
+}
+
+impl Decoder for ArraySchema {
+    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    where
+        R: io::Read + ReadBytesExt,
+    {
+        let len = match &self.length {
+            LengthEncoding::Fixed { length } => *length,
+            LengthEncoding::ExplicitLength(lenght_dec) => lenght_dec
+                .decode(target)?
+                .as_u64()
+                .expect("counts are always unsigned ints")
+                as _,
+        };
+
+        let elements: Result<Vec<_>, _> = (0..len).map(|_| self.items.decode(target)).collect();
+        Ok(elements?.into())
     }
 }
 

@@ -1,7 +1,8 @@
 //! Implementation of the string schema
 
-use crate::{Encoder, Error, IntegerSchema, Result};
-use byteorder::WriteBytesExt;
+use crate::{Decoder, Encoder, Error, IntegerSchema, Result};
+use bstr::ByteVec as _;
+use byteorder::{ReadBytesExt, WriteBytesExt};
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;
 use serde_json::Value;
@@ -200,6 +201,7 @@ impl Encoder for StringSchema {
                 Ok(written)
             }
             StringSchema::LengthEncoded(int) => {
+                exceeds_length(value, int)?;
                 let len = value.len();
                 int.encode(target, &len.into())?;
                 target.write_all(value.as_bytes())?;
@@ -220,6 +222,7 @@ impl Encoder for StringSchema {
                 let len_value = value.len();
                 let capacity = *capacity;
                 exceeds_cap(value, capacity)?;
+                exceeds_length(value, length)?;
                 length.encode(target, &len_value.into())?;
                 target.write_all(value.as_bytes())?;
                 fill_rest(
@@ -258,6 +261,45 @@ impl Encoder for StringSchema {
     }
 }
 
+impl Decoder for StringSchema {
+    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    where
+            R: io::Read + ReadBytesExt {
+        let value = match self {
+            StringSchema::Fixed(length) => {
+                read_str_with_length(target, *length)?
+            }
+            StringSchema::LengthEncoded(schema) => {
+                let length = schema.decode(target)?.as_u64().expect("length is always u64");
+                read_str_with_length(target, length as _)?
+            }
+            StringSchema::EndPattern(pattern) => {
+                read_str_with_pattern(target, pattern, usize::MAX)?
+            }
+            StringSchema::LenAndCap { length, capacity, .. } => {
+                let length = length.decode(target)?.as_u64().expect("length is always u64") as _;
+                if length > *capacity {
+                    return Err(Error::EncodedValueExceedsCapacity {
+                        len: length,
+                        cap: *capacity,
+                    })
+                }
+                read_str_with_length(target, length)?
+            }
+            StringSchema::PatternAndCap { pattern, capacity, .. } => {
+                read_str_with_pattern(target, pattern, *capacity)?
+            }
+            StringSchema::TillEnd => {
+                let mut buf = String::new();
+                target.read_to_string(&mut buf)?;
+                buf
+            }
+        };
+
+        Ok(value.into())
+    }
+}
+
 fn matches_fixed_len(value: &str, len: usize) -> Result<()> {
     if value.len() != len {
         Err(Error::NotMatchFixedLength {
@@ -292,6 +334,18 @@ fn exceeds_cap(value: &str, cap: usize) -> Result<()> {
     }
 }
 
+fn exceeds_length(value: &str, schema: &IntegerSchema) -> Result<()> {
+    if value.len() > schema.max_value() {
+        Err(Error::ExceededLengthEncoding {
+            value: value.to_owned(),
+            len: value.len(),
+            max: schema.max_value(),
+        })
+    } else {
+        Ok(())
+    }
+}
+
 fn fill_rest<W: io::Write>(target: W, cap: usize, filled: usize, filler: char) -> Result<usize> {
     let mut target = target;
     let to_fill = cap - filled;
@@ -301,6 +355,42 @@ fn fill_rest<W: io::Write>(target: W, cap: usize, filled: usize, filler: char) -
         target.write_all(&c)?;
     }
     Ok(to_fill)
+}
+
+fn read_str_with_length<R>(mut reader: R, length: usize) -> Result<String> 
+where
+    R: io::Read,
+{
+    let mut buf = vec![0; length];
+    reader.read_exact(buf.as_mut_slice())?;
+    String::from_utf8(buf).map_err(Into::into)
+}
+
+fn read_str_with_pattern<R>(reader: R, pattern: &str, max: usize) -> Result<String> 
+where
+    R: io::Read,
+{
+    let mut buf = Vec::new();
+    let pattern_len = pattern.len() as isize;
+    let max = max as isize;
+    for b in reader.bytes() {
+        let b = b?;
+        buf.push(b);
+        if buf.ends_with(pattern.as_bytes()) {
+            (0..pattern_len).for_each(|_| {buf.pop_byte();});
+            return buf.into_string().map_err(Into::into);
+        } else if buf.len() as isize - pattern_len >= max {
+            return Err(Error::NoPattern {
+                read: buf.into_string()?,
+                pattern: pattern.to_owned(),
+            });
+        }
+    }
+
+    Err(Error::NoPattern {
+        read: buf.into_string()?,
+        pattern: pattern.to_owned(),
+    })
 }
 
 #[cfg(test)]

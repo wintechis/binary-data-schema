@@ -1,7 +1,7 @@
 //! Implementation of the Boolean schema
 
-use crate::{Bitfield, Encoder, Error, Result};
-use byteorder::WriteBytesExt;
+use crate::{Bitfield, Decoder, Encoder, Error, Result};
+use byteorder::{ReadBytesExt, WriteBytesExt};
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;
 use serde_json::Value;
@@ -76,6 +76,21 @@ impl Encoder for BooleanSchema {
         let written = self.bf.encode(target, &int.into())?;
 
         Ok(written)
+    }
+}
+
+impl Decoder for BooleanSchema {
+    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    where
+        R: io::Read + ReadBytesExt,
+    {
+        let int = self
+            .bf
+            .decode(target)?
+            .as_u64()
+            .expect("always u64 from BF");
+        let b = if int == 0 { false } else { true };
+        Ok(b.into())
     }
 }
 

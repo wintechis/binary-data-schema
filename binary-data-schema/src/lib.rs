@@ -2,10 +2,10 @@
 
 #![warn(missing_debug_implementations)]
 
-use byteorder::WriteBytesExt;
+use byteorder::{ReadBytesExt, WriteBytesExt};
 use serde::Deserialize;
 use serde_json::Value;
-use std::io;
+use std::{io, string::FromUtf8Error};
 
 mod integer;
 pub use self::integer::*;
@@ -29,6 +29,10 @@ pub enum Error {
     Serialization(#[from] serde_json::Error),
     #[error("Encoding a value failed: {0}")]
     WriteFail(#[from] io::Error),
+    #[error("The encoded string is invalid: {0}")]
+    InvalidString(#[from] FromUtf8Error),
+    #[error("The encoded string is invalid: {0}")]
+    InvalidBString(#[from] bstr::FromUtf8Error),
     #[error("Invalid length requested: Maximum allowed is {max} but {requested} where requested")]
     MaxLength { max: usize, requested: usize },
     #[error("The requsted length of {requested} is invalid for floating-point serialization. Either use 4 or 8 or use an integer encoding")]
@@ -81,6 +85,16 @@ pub enum Error {
     InconsitentFixedLength,
     #[error("The position {0} has been used multiple times in the object schema but only bitfields are allowed to share a position.")]
     InvalidPosition(usize),
+    #[error("Can not decode value as the encoded lenght is {len} but capcacity is only {cap}.")]
+    EncodedValueExceedsCapacity {
+        len: usize,
+        cap: usize
+    },
+    #[error("The encoded value '{read}' does not contain the endpattern '{pattern}'.")]
+    NoPattern {
+        read: String,
+        pattern: String,
+    }
 }
 
 /// A schema to serialize a value to bytes.
@@ -89,6 +103,13 @@ pub trait Encoder {
     fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt;
+}
+
+/// A schema to de-serialize a value from bytes.
+pub trait Decoder {
+    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    where
+        R: io::Read + ReadBytesExt;
 }
 
 #[derive(Debug, Copy, Clone, Deserialize, Eq, PartialEq)]
@@ -112,6 +133,13 @@ pub enum DataSchema {
     Number(NumberSchema),
     String(StringSchema),
     Array(Box<ArraySchema>),
+    Object(ObjectSchema),
+}
+
+impl From<ObjectSchema> for DataSchema {
+    fn from(v: ObjectSchema) -> Self {
+        DataSchema::Object(v)
+    }
 }
 
 impl From<ArraySchema> for DataSchema {
@@ -155,6 +183,23 @@ impl Encoder for DataSchema {
             DataSchema::Number(schema) => schema.encode(target, value),
             DataSchema::String(schema) => schema.encode(target, value),
             DataSchema::Array(schema) => schema.encode(target, value),
+            DataSchema::Object(schema) => schema.encode(target, value),
+        }
+    }
+}
+
+impl Decoder for DataSchema {
+    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    where
+        R: io::Read + ReadBytesExt,
+    {
+        match self {
+            DataSchema::Boolean(dec) => dec.decode(target),
+            DataSchema::Integer(dec) => dec.decode(target),
+            DataSchema::Number(dec) => dec.decode(target),
+            DataSchema::String(_) => todo!(),
+            DataSchema::Array(dec) => dec.decode(target),
+            DataSchema::Object(dec) => dec.decode(target),
         }
     }
 }

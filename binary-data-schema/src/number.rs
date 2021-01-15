@@ -1,7 +1,7 @@
 //! Implementation of the number schema
 
-use crate::{ByteOrder, Encoder, Error, IntegerSchema, RawIntegerSchema, Result};
-use byteorder::WriteBytesExt;
+use crate::{ByteOrder, Decoder, Encoder, Error, IntegerSchema, RawIntegerSchema, Result};
+use byteorder::{ReadBytesExt, WriteBytesExt, BE, LE};
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;
 use serde_json::Value;
@@ -141,27 +141,50 @@ impl Encoder for NumberSchema {
             }
             NumberSchema::Float { byteorder } => {
                 let value = value as f32;
-                let bytes = if *byteorder == ByteOrder::BigEndian {
-                    value.to_be_bytes()
-                } else {
-                    value.to_le_bytes()
-                };
-                target.write_all(&bytes)?;
+                match byteorder {
+                    ByteOrder::LittleEndian => target.write_f32::<LE>(value)?,
+                    ByteOrder::BigEndian => target.write_f32::<BE>(value)?,
+                }
                 4
             }
             NumberSchema::Double { byteorder } => {
                 let value = value;
-                let bytes = if *byteorder == ByteOrder::BigEndian {
-                    value.to_be_bytes()
-                } else {
-                    value.to_le_bytes()
-                };
-                target.write_all(&bytes)?;
+                match byteorder {
+                    ByteOrder::LittleEndian => target.write_f64::<LE>(value)?,
+                    ByteOrder::BigEndian => target.write_f64::<BE>(value)?,
+                }
                 8
             }
         };
 
         Ok(length)
+    }
+}
+
+impl Decoder for NumberSchema {
+    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    where
+        R: io::Read + ReadBytesExt,
+    {
+        let value = match self {
+            NumberSchema::Integer { integer, .. } => {
+                let int = integer
+                    .decode(target)?
+                    .as_f64()
+                    .expect("always works on integer schemata");
+                self.from_binary_value(int).into()
+            }
+            NumberSchema::Float { byteorder } => match byteorder {
+                ByteOrder::LittleEndian => target.read_f32::<LE>()?.into(),
+                ByteOrder::BigEndian => target.read_f32::<BE>()?.into(),
+            },
+            NumberSchema::Double { byteorder } => match byteorder {
+                ByteOrder::LittleEndian => target.read_f64::<LE>()?.into(),
+                ByteOrder::BigEndian => target.read_f64::<BE>()?.into(),
+            },
+        };
+
+        Ok(value)
     }
 }
 

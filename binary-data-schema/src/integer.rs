@@ -1,7 +1,7 @@
 //! Implementation of the integer schema
 
-use crate::{ByteOrder, Encoder, Error, Result};
-use byteorder::{WriteBytesExt, BE, LE};
+use crate::{ByteOrder, Decoder, Encoder, Error, Result};
+use byteorder::{ReadBytesExt, WriteBytesExt, BE, LE};
 use serde::{de::Error as _, Deserialize, Deserializer};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -87,6 +87,23 @@ impl Encoder for JoinedBitfield {
 
         let int = self.integer();
         int.encode(target, &buffer.into())
+    }
+}
+
+impl Decoder for JoinedBitfield {
+    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    where
+        R: io::Read + ReadBytesExt,
+    {
+        let int = self.integer();
+        let int = int.decode(target)?.as_u64().expect("Is always u64");
+        let mut res = Value::default();
+        for (name, bf) in self.fields.iter() {
+            let value = bf.read(int);
+            res[name] = value.into();
+        }
+
+        Ok(res)
     }
 }
 
@@ -191,6 +208,17 @@ impl Encoder for Bitfield {
     }
 }
 
+impl Decoder for Bitfield {
+    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    where
+        R: io::Read + ReadBytesExt,
+    {
+        let int = self.integer();
+        let int = int.decode(target)?.as_u64().expect("Is always u64.");
+        Ok(self.read(int).into())
+    }
+}
+
 impl TryFrom<RawIntegerSchema> for Bitfield {
     type Error = Error;
 
@@ -290,6 +318,20 @@ impl Encoder for Integer {
         };
 
         Ok(self.length)
+    }
+}
+
+impl Decoder for Integer {
+    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    where
+        R: io::Read + ReadBytesExt,
+    {
+        Ok(match (self.byteorder, self.signed) {
+            (ByteOrder::BigEndian, true) => target.read_int::<BE>(self.length)?.into(),
+            (ByteOrder::BigEndian, false) => target.read_uint::<BE>(self.length)?.into(),
+            (ByteOrder::LittleEndian, true) => target.read_int::<LE>(self.length)?.into(),
+            (ByteOrder::LittleEndian, false) => target.read_uint::<LE>(self.length)?.into(),
+        })
     }
 }
 
@@ -398,6 +440,18 @@ impl Encoder for IntegerSchema {
         match self {
             IntegerSchema::Integer(schema) => schema.encode(target, value),
             IntegerSchema::Bitfield(schema) => schema.encode(target, value),
+        }
+    }
+}
+
+impl Decoder for IntegerSchema {
+    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    where
+        R: io::Read + ReadBytesExt,
+    {
+        match self {
+            IntegerSchema::Integer(dec) => dec.decode(target),
+            IntegerSchema::Bitfield(dec) => dec.decode(target),
         }
     }
 }

@@ -41,11 +41,23 @@ name = "binary-data-schema"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bstr",
  "byteorder",
  "serde",
  "serde_json",
  "thiserror",
  "valico",
+]
+
+[[package]]
+name = "bstr"
+version = "0.2.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "473fc6b38233f9af7baa94fb5852dca389e3d95b8e21c8e3719301462c5d9faf"
+dependencies = [
+ "lazy_static",
+ "memchr 2.3.4",
+ "regex-automata",
 ]
 
 [[package]]
@@ -356,6 +368,15 @@ dependencies = [
  "memchr 2.3.4",
  "regex-syntax 0.6.21",
  "thread_local 1.0.1",
+]
+
+[[package]]
+name = "regex-automata"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae1ded71d66a4a97f5e961fd0cb25a5f366a42a41570d16a763a69c092c26ae4"
+dependencies = [
+ "byteorder",
 ]
 
 [[package]]

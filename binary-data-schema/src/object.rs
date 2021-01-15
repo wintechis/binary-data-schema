@@ -1,7 +1,7 @@
 //! Implementation of the string schema
 
-use crate::{DataSchema, Encoder, Error, IntegerSchema, JoinedBitfield, Result};
-use byteorder::WriteBytesExt;
+use crate::{DataSchema, Decoder, Encoder, Error, IntegerSchema, JoinedBitfield, Result};
+use byteorder::{WriteBytesExt, ReadBytesExt};
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;
 use serde_json::Value;
@@ -43,6 +43,35 @@ impl Encoder for PropertySchema {
             }
             PropertySchema::Merged(schema) => schema.encode(target, value),
         }
+    }
+}
+
+impl PropertySchema {
+    /// Decodes values and adds them to the provided Json.
+    ///
+    /// This is contrary to the normal [Decoder] trait where new values are
+    /// created.
+    fn decode_into<R>(&self, target: &mut R, value: &mut Value) -> Result<()> 
+    where
+        R: io::Read + ReadBytesExt,
+    {
+        match self {
+            PropertySchema::Simple { name, schema } => {
+                value[name] = schema.decode(target)?;
+            }
+            PropertySchema::Merged(schema) => {
+                let map = if let Value::Object(map) = schema.decode(target)? {
+                    map
+                } else {
+                    panic!("Should have always been a map");
+                };
+                for (name, bf_value) in map {
+                    value[name] = bf_value;
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -126,6 +155,19 @@ impl Encoder for ObjectSchema {
         }
 
         Ok(written)
+    }
+}
+
+impl Decoder for ObjectSchema {
+    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    where
+            R: io::Read + ReadBytesExt {
+        let mut value = serde_json::json!({});
+        for p in self.properties.iter() {
+            p.schema.decode_into(target, &mut value)?;
+        }
+
+        Ok(value)
     }
 }
 
