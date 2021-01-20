@@ -114,10 +114,7 @@ impl TryFrom<RawObject> for ObjectSchema {
                 let (name, schema) = vec.pop().expect("Ensured by .len() == 1");
                 Property {
                     position,
-                    schema: PropertySchema::Simple {
-                        name,
-                        schema: schema.into(),
-                    },
+                    schema: PropertySchema::Simple { name, schema },
                 }
             } else {
                 let fields: Result<HashMap<_, _>, _> = vec

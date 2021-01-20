@@ -161,8 +161,8 @@ impl StringEncoding {
     fn encoded_length(&self, value_len: usize) -> usize {
         match self {
             StringEncoding::Fixed(_) => value_len,
-            StringEncoding::LengthEncoded(int) => int.length() +  value_len,
-            StringEncoding::EndPattern { encoded, ..} => encoded.len() + value_len,
+            StringEncoding::LengthEncoded(int) => int.length() + value_len,
+            StringEncoding::EndPattern { encoded, .. } => encoded.len() + value_len,
             StringEncoding::LenAndCap {
                 capacity, length, ..
             } => *capacity + length.length(),
@@ -186,7 +186,7 @@ impl StringEncoding {
                 int.encode(target, &value.len().into()).map_err(Box::new)?;
                 target.write_all(&value)?;
             }
-            StringEncoding::EndPattern {encoded, decoded} => {
+            StringEncoding::EndPattern { encoded, decoded } => {
                 contains_end_sequencs(&value, encoded, decoded)?;
                 target.write_all(&value)?;
                 target.write_all(&encoded)?;
@@ -250,7 +250,7 @@ impl StringEncoding {
                     .expect("length is always u64");
                 read_str_with_length(target, length as _)?
             }
-            StringEncoding::EndPattern {encoded, decoded } => {
+            StringEncoding::EndPattern { encoded, decoded } => {
                 read_str_with_pattern(target, encoded, usize::MAX, decoded)?
             }
             StringEncoding::LenAndCap {
@@ -269,7 +269,10 @@ impl StringEncoding {
                 read_str_with_length(target, length)?
             }
             StringEncoding::PatternAndCap {
-                encoded, capacity, decoded, ..
+                encoded,
+                capacity,
+                decoded,
+                ..
             } => read_str_with_pattern(target, encoded, *capacity, decoded)?,
             StringEncoding::TillEnd => {
                 let mut buf = Vec::new();
@@ -428,7 +431,12 @@ fn exceeds_length(value_len: usize, schema: &IntegerSchema) -> Result<(), Encodi
     }
 }
 
-fn fill_rest<W: io::Write>(target: W, cap: usize, filled: usize, filler: char) -> Result<usize, EncodingError> {
+fn fill_rest<W: io::Write>(
+    target: W,
+    cap: usize,
+    filled: usize,
+    filler: char,
+) -> Result<usize, EncodingError> {
     let mut target = target;
     let to_fill = cap - filled;
     let mut c = [0];
@@ -448,7 +456,12 @@ where
     Ok(buf)
 }
 
-fn read_str_with_pattern<R>(reader: R, pattern: &[u8], max: usize, decoded_pattern: &str) -> Result<Vec<u8>>
+fn read_str_with_pattern<R>(
+    reader: R,
+    pattern: &[u8],
+    max: usize,
+    decoded_pattern: &str,
+) -> Result<Vec<u8>>
 where
     R: io::Read,
 {

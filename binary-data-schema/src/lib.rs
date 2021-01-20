@@ -70,7 +70,9 @@ pub enum Error {
     NotAnObject(String),
     #[error("The length of an array must be encoded in some way.")]
     MissingArrayLength,
-    #[error("Can not encode array {value} as its length is {len} but only length {fixed} is supported.")]
+    #[error(
+        "Can not encode array {value} as its length is {len} but only length {fixed} is supported."
+    )]
     NotMatchFixedLength {
         value: String,
         len: usize,
@@ -449,7 +451,7 @@ mod test {
         let schema = from_value::<DataSchema>(schema)?;
         let value = json!({ "red": 255, "green": 16, "blue": 255 });
         let expected = [0x7e, 0, 0x05, 0x03, 0xff, 0x10, 0xff, 0, 0xef];
-        
+
         let mut buffer = Vec::new();
         assert_eq!(9, schema.encode(&mut buffer, &value)?);
         assert_eq!(&expected, buffer.as_slice());
@@ -493,7 +495,7 @@ mod test {
         let schema = from_value::<DataSchema>(schema)?;
         let value = json!({ "is_on": true });
         let expected = [0x7e, 0, 0x04, 1, 0, 0, 0, 0, 0xef];
-        
+
         let mut buffer = Vec::new();
         assert_eq!(9, schema.encode(&mut buffer, &value)?);
         assert_eq!(&expected, buffer.as_slice());

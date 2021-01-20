@@ -1,9 +1,9 @@
-use binary_data_schema::{DataSchema, Decoder, Encoder};
 use anyhow::Result;
+use binary_data_schema::{DataSchema, Decoder, Encoder};
+use std::fs::File;
+use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use structopt::StructOpt;
-use std::io::{BufReader, Read};
-use std::fs::File;
 
 #[derive(Debug, StructOpt)]
 enum Command {
@@ -27,13 +27,12 @@ struct Cli {
     input: PathBuf,
 }
 
-
 fn main() -> Result<()> {
     let cli = Cli::from_args();
     let schema = File::open(cli.schema)?;
     let schema = BufReader::new(schema);
     let schema: DataSchema = serde_json::from_reader(schema)?;
-    
+
     let mut input = File::open(cli.input)?;
     let mut buffer = String::new();
     input.read_to_string(&mut buffer)?;
@@ -44,7 +43,7 @@ fn main() -> Result<()> {
             let mut input = std::io::Cursor::new(input);
             let value = schema.decode(&mut input)?;
             println!("{}", serde_json::to_string_pretty(&value)?);
-        },
+        }
         Command::Encode => {
             let value = serde_json::from_str(&buffer)?;
             let mut buffer = Vec::new();
@@ -52,6 +51,6 @@ fn main() -> Result<()> {
             println!("{}", hex::encode(buffer));
         }
     }
-    
+
     Ok(())
 }

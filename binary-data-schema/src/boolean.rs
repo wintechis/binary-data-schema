@@ -89,7 +89,7 @@ impl Decoder for BooleanSchema {
             .decode(target)?
             .as_u64()
             .expect("always u64 from BF");
-        let b = if int == 0 { false } else { true };
+        let b = int != 0;
         Ok(b.into())
     }
 }
