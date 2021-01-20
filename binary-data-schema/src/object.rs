@@ -1,7 +1,7 @@
 //! Implementation of the string schema
 
 use crate::{DataSchema, Decoder, Encoder, Error, IntegerSchema, JoinedBitfield, Result};
-use byteorder::{WriteBytesExt, ReadBytesExt};
+use byteorder::{ReadBytesExt, WriteBytesExt};
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;
 use serde_json::Value;
@@ -35,6 +35,10 @@ impl Encoder for PropertySchema {
         W: io::Write + WriteBytesExt,
     {
         match self {
+            PropertySchema::Simple {
+                schema: DataSchema::Const { schema, const_val },
+                ..
+            } => schema.encode(target, &const_val),
             PropertySchema::Simple { name, schema } => {
                 let value = value
                     .get(name)
@@ -51,7 +55,7 @@ impl PropertySchema {
     ///
     /// This is contrary to the normal [Decoder] trait where new values are
     /// created.
-    fn decode_into<R>(&self, target: &mut R, value: &mut Value) -> Result<()> 
+    fn decode_into<R>(&self, target: &mut R, value: &mut Value) -> Result<()>
     where
         R: io::Read + ReadBytesExt,
     {
@@ -110,7 +114,10 @@ impl TryFrom<RawObject> for ObjectSchema {
                 let (name, schema) = vec.pop().expect("Ensured by .len() == 1");
                 Property {
                     position,
-                    schema: PropertySchema::Simple { name, schema },
+                    schema: PropertySchema::Simple {
+                        name,
+                        schema: schema.into(),
+                    },
                 }
             } else {
                 let fields: Result<HashMap<_, _>, _> = vec
@@ -161,7 +168,8 @@ impl Encoder for ObjectSchema {
 impl Decoder for ObjectSchema {
     fn decode<R>(&self, target: &mut R) -> Result<Value>
     where
-            R: io::Read + ReadBytesExt {
+        R: io::Read + ReadBytesExt,
+    {
         let mut value = serde_json::json!({});
         for p in self.properties.iter() {
             p.schema.decode_into(target, &mut value)?;
@@ -173,7 +181,52 @@ impl Decoder for ObjectSchema {
 
 #[cfg(test)]
 mod test {
-    // use super::*;
-    // use anyhow::Result;
-    // use serde_json::{from_value, json};
+    use super::*;
+    use anyhow::Result;
+    use serde_json::{from_value, json};
+
+    #[test]
+    fn xiaomi_thermometer() -> Result<()> {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "temperature": {
+                    "type": "number",
+                    "position": 1,
+                    "length": 2,
+                    "scale": 0.01,
+                    "byteorder": "littleendian",
+                    "unit": "degree celcius"
+                },
+                "humidity": {
+                    "type": "integer",
+                    "position": 2,
+                    "length": 1,
+                    "unit": "percent"
+                },
+                "rest": {
+                    "type": "integer",
+                    "position": 5,
+                    "length": 2
+                }
+            }
+        });
+        let schema = from_value::<DataSchema>(schema)?;
+        assert!(matches!(schema, DataSchema::Object(_)));
+        let value = json!({
+            "temperature": 22.1,
+            "humidity": 57,
+            "rest": 0
+        });
+        let mut buffer = Vec::new();
+        assert_eq!(5, schema.encode(&mut buffer, &value)?);
+        let expected = [0xA2, 0x08, 0x39, 0, 0];
+        assert_eq!(&expected, buffer.as_slice());
+        let mut cursor = std::io::Cursor::new(buffer);
+
+        let returned = schema.decode(&mut cursor)?;
+        assert_eq!(value, returned);
+
+        Ok(())
+    }
 }
