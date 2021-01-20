@@ -246,7 +246,6 @@ impl<'de> Deserialize<'de> for DataSchema {
         D: Deserializer<'de>,
     {
         let raw = RawDataSchema::deserialize(deserializer)?;
-        println!("raw_schema: {:#?}", raw);
         DataSchema::try_from(raw).map_err(D::Error::custom)
     }
 }
@@ -411,7 +410,8 @@ mod test {
                 "start": {
                     "type": "string",
                     "format": "binary",
-                    "length": 4,
+                    "minLength": 4,
+                    "maxLength": 4,
                     "const": "7e000503",
                     "position": 1
                 },
@@ -439,7 +439,8 @@ mod test {
                 "end": {
                     "type": "string",
                     "format": "binary",
-                    "length": 2,
+                    "minLength": 2,
+                    "maxLength": 2,
                     "const": "00ef",
                     "position": 10
                 }
@@ -453,6 +454,12 @@ mod test {
         assert_eq!(9, schema.encode(&mut buffer, &value)?);
         assert_eq!(&expected, buffer.as_slice());
 
+        let mut input = std::io::Cursor::new(expected);
+        let returned = schema.decode(&mut input)?;
+        assert_eq!(returned["red"], 255);
+        assert_eq!(returned["green"], 16);
+        assert_eq!(returned["blue"], 255);
+
         Ok(())
     }
 
@@ -464,7 +471,8 @@ mod test {
                 "start": {
                     "type": "string",
                     "format": "binary",
-                    "length": 3,
+                    "minLength": 3,
+                    "maxLength": 3,
                     "const": "7e0004",
                     "position": 1
                 },
@@ -475,7 +483,8 @@ mod test {
                 "end": {
                     "type": "string",
                     "format": "binary",
-                    "length": 5,
+                    "minLength": 5,
+                    "maxLength": 5,
                     "const": "00000000ef",
                     "position": 10
                 }

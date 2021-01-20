@@ -1,3 +1,4 @@
 /target
 .cargo-ok
 Cargo.lock
+/binary-data-schema/Cargo.lock

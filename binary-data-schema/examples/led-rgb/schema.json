@@ -1,0 +1,42 @@
+{
+    "type": "object",
+    "properties": {
+        "start": {
+            "type": "string",
+            "format": "binary",
+            "minLength": 4,
+            "maxLength": 4,
+            "const": "7e000503",
+            "position": 1
+        },
+        "red": {
+            "type": "integer",
+            "signed": false,
+            "length": 1,
+            "position": 3,
+            "description": "Red value of the color [0 - 255]."
+        },
+        "green": {
+            "type": "integer",
+            "signed": false,
+            "length": 1,
+            "position": 4,
+            "description": "Green value of the color [0 - 255]."
+        },
+        "blue": {
+            "type": "integer",
+            "signed": false,
+            "length": 1,
+            "position": 5,
+            "description": "Blue value of the color [0 - 255]."
+        },
+        "end": {
+            "type": "string",
+            "format": "binary",
+            "minLength": 2,
+            "maxLength": 2,
+            "const": "00ef",
+            "position": 10
+        }
+    }
+}
