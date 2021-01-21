@@ -332,32 +332,7 @@ impl Decoder for DataSchema {
 mod test {
     use super::*;
     use anyhow::Result;
-    use serde_json::{from_reader, from_value, json, to_string_pretty};
-    use std::fs::File;
-    use valico::json_schema;
-
-    #[test]
-    fn validate_1() -> Result<()> {
-        let schema = from_reader(File::open("test-files/1/schema.json")?)?;
-        let mut scope = json_schema::Scope::new();
-        let schema = scope.compile_and_return(schema, false)?;
-
-        let valid = from_reader(File::open("test-files/1/valid.json")?)?;
-        let invalid = from_reader(File::open("test-files/1/invalid.json")?)?;
-
-        let expect_valid = schema.validate(&valid);
-        let expect_invalid = schema.validate(&invalid);
-
-        println!("Valid test result:\n{}", to_string_pretty(&expect_valid)?);
-        println!(
-            "Invalid test result:\n{}",
-            to_string_pretty(&expect_invalid)?
-        );
-
-        assert!(expect_valid.is_valid());
-        assert!(!expect_invalid.is_valid());
-        Ok(())
-    }
+    use serde_json::{from_value, json};
 
     #[test]
     fn const_schema() -> Result<()> {
