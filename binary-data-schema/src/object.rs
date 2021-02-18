@@ -349,20 +349,6 @@ mod test {
             }
         });
         let _schema = from_value::<DataSchema>(schema)?;
-        // assert!(matches!(schema, DataSchema::Object(_)));
-        // let value = json!({
-        //     "temperature": 22.1,
-        //     "humidity": 57,
-        //     "rest": 0
-        // });
-        // let mut buffer = Vec::new();
-        // assert_eq!(5, schema.encode(&mut buffer, &value)?);
-        // let expected = [0xA2, 0x08, 0x39, 0, 0];
-        // assert_eq!(&expected, buffer.as_slice());
-        // let mut cursor = std::io::Cursor::new(buffer);
-
-        // let returned = schema.decode(&mut cursor)?;
-        // assert_eq!(value, returned);
 
         Ok(())
     }
@@ -396,7 +382,25 @@ mod test {
                 }
             }
         });
-        let _schema = from_value::<DataSchema>(schema)?;
+        let schema = from_value::<DataSchema>(schema)?;
+        println!("schema:\n{:#?}", schema);
+        assert!(matches!(schema, DataSchema::Object(_)));
+
+        let value = json!({
+            "battery": 3.0,
+            "txPower": 4,
+        });
+        let mut buffer = Vec::new();
+        assert_eq!(2, schema.encode(&mut buffer, &value)?);
+        let _battery = 0b101_0111_1000; // 1400 = 3.0 V
+        let _tx_power = 0b1_0110; // 22 = +4 dBm
+        let expected: [u8; 2] = [0b1010_1110, 0b1111_0110];
+        assert_eq!(&expected, buffer.as_slice());
+        let mut cursor = std::io::Cursor::new(buffer);
+
+        let _returned = schema.decode(&mut cursor)?;
+        // returned is rpughly the same but due to loss of precision due to floating point operations value is not exact.
+        //assert_eq!(value, returned);
 
         Ok(())
     }

@@ -97,14 +97,27 @@ impl Encoder for JoinedBitfield {
         W: io::Write + WriteBytesExt,
     {
         let mut buffer = 0;
-        for (name, bf) in self.raw_bfs() {
+        for (name, ds) in self.fields.iter() {
             let value = value
                 .get(name)
                 .ok_or_else(|| Error::MissingField(name.to_owned()))?;
-            let value = value.as_u64().ok_or_else(|| Error::InvalidValue {
-                value: value.to_string(),
-                type_: "integer",
-            })?;
+            let bf = match ds {
+                DataSchema::Number(NumberSchema::Integer { integer: IntegerSchema::Bitfield(bf), .. }) |
+                DataSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
+                _ => unreachable!("ensured at constructor"),
+            };
+            let value = if let DataSchema::Number(ns) = ds {
+                let value = value.as_f64().ok_or_else(|| Error::InvalidValue {
+                    value: value.to_string(),
+                    type_: "number",
+                })?;
+                ns.to_binary_value(value) as _
+            } else {
+                value.as_u64().ok_or_else(|| Error::InvalidValue {
+                    value: value.to_string(),
+                    type_: "integer",
+                })?
+            };
             bf.write(value, &mut buffer);
         }
 
@@ -121,9 +134,19 @@ impl Decoder for JoinedBitfield {
         let int = self.integer();
         let int = int.decode(target)?.as_u64().expect("Is always u64");
         let mut res = Value::default();
-        for (name, bf) in self.raw_bfs() {
+        for (name, ds) in self.fields.iter() {
+            let bf = match ds {
+                DataSchema::Number(NumberSchema::Integer { integer: IntegerSchema::Bitfield(bf), .. }) |
+                DataSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
+                _ => unreachable!("ensured at constructor"),
+            };
             let value = bf.read(int);
-            res[name] = value.into();
+            if let DataSchema::Number(ns) = ds {
+                let value = ns.from_binary_value(value as _);
+                res[name] = value.into();
+            } else {
+                res[name] = value.into();
+            }
         }
 
         Ok(res)
