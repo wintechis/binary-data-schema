@@ -1,4 +1,4 @@
-# binary-data-schema
+# Binary Data Schema
 
 [![Crates.io](https://img.shields.io/crates/v/binary-data-schema.svg)](https://crates.io/crates/binary-data-schema)
 [![Docs.rs](https://docs.rs/binary-data-schema/badge.svg)](https://docs.rs/binary-data-schema)
