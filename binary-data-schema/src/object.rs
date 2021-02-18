@@ -1,6 +1,6 @@
 //! Implementation of the string schema
 
-use crate::{DataSchema, Decoder, Encoder, Error, IntegerSchema, JoinedBitfield, Result};
+use crate::{DataSchema, Decoder, Encoder, Error, JoinedBitfield, Result};
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use serde::de::{Deserializer, Error as DeError};
 use serde::Deserialize;
@@ -119,9 +119,12 @@ impl TryFrom<RawObject> for ObjectSchema {
             } else {
                 let fields: Result<HashMap<_, _>, _> = vec
                     .into_iter()
-                    .map(|(name, schema)| match schema {
-                        DataSchema::Integer(IntegerSchema::Bitfield(bf)) => Ok((name, bf)),
-                        _ => Err(Error::InvalidPosition(position)),
+                    .map(|(name, schema)| {
+                        if schema.is_bitfield() {
+                            Ok((name, schema))
+                        } else {
+                             Err(Error::InvalidPosition(position))
+                        }
                     })
                     .collect();
                 let joined = JoinedBitfield::join(fields?)?;
@@ -223,6 +226,177 @@ mod test {
 
         let returned = schema.decode(&mut cursor)?;
         assert_eq!(value, returned);
+
+        Ok(())
+    }
+
+    #[test]
+    fn ruuvi_tag() -> Result<()> {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "version": {
+                    "type": "integer",
+                    "length": 1,
+                    "const": 5,
+                    "position": 1,
+                    "description": "Version number of the protocol."
+                },
+                "temperature": {
+                    "@type": "env:RoomTemperature",
+                    "type": "number",
+                    "length": 2,
+                    "scale": 0.005,
+                    "position": 10,
+                    "unit": "degree celcius",
+                    "description": "Temperature of the air surrounding the RuuviTag."
+                },
+                "humidity": {
+                    "@type": "env:AirHumidity",
+                    "type": "number",
+                    "length": 2,
+                    "scale": 0.0025,
+                    "signed": false,
+                    "position": 20,
+                    "unit": "percent",
+                    "description": "Relative humidity of the air surrounding the RuuviTag."
+                },
+                "pressure": {
+                    "@type": "env:AtmosphericPressure",
+                    "type": "number",
+                    "length": 2,
+                    "offset": 50000,
+                    "signed": false,
+                    "position": 30,
+                    "unit": "Pa",
+                    "description": "Atmospheric pressure on the RuuviTag."
+                },
+                "acceleration": {
+                    "type": "object",
+                    "position": 40,
+                    "description": "3D accereration of the RuuviTag.",
+                    "properties": {
+                        "x": {
+                            "type": "number",
+                            "length": 2,
+                            "scale": 0.001,
+                            "unit": "G-force",
+                            "position": 10,
+                            "desription": "Acceleration in x-axis."
+                        },
+                        "y": {
+                            "type": "number",
+                            "length": 2,
+                            "scale": 0.001,
+                            "unit": "G-force",
+                            "position": 20,
+                            "desription": "Acceleration in y-axis."
+                        },
+                        "z": {
+                            "type": "number",
+                            "length": 2,
+                            "scale": 0.001,
+                            "unit": "G-force",
+                            "position": 30,
+                            "desription": "Acceleration in z-axis."
+                        }
+                    }
+                },
+                "battery": {
+                    "type": "number",
+                    "offset": 1.6,
+                    "scale": 0.001,
+                    "length": 2,
+                    "bits": 11,
+                    "bitoffset": 5,
+                    "position": 50,
+                    "unit": "volts",
+                    "description": "Voltage of the battery powering the RuuviTag."
+                },
+                "txPower": {
+                    "type": "number",
+                    "offset": -40,
+                    "scale": 2,
+                    "length": 2,
+                    "bits": 5,
+                    "bitoffset": 0,
+                    "position": 50,
+                    "unit": "dBm",
+                    "description": "Transmission power in 1m distance."
+                },
+                "moveCnt": {
+                    "type": "integer",
+                    "length": 1,
+                    "signed": false,
+                    "position": 60,
+                    "description": "Number of movements (derived from accelerometer)."
+                },
+                "idx": {
+                    "type": "integer",
+                    "length": 2,
+                    "signed": false,
+                    "position": 70,
+                    "description": "Measurement sequence number. Can be used to de-duplicate data."
+                },
+                "mac": {
+                    "type": "string",
+                    "format": "binary",
+                    "minLength": 6,
+                    "maxLength": 6,
+                    "position": 80,
+                    "description": "MAC address of the RuuviTag."
+                }
+            }
+        });
+        let _schema = from_value::<DataSchema>(schema)?;
+        // assert!(matches!(schema, DataSchema::Object(_)));
+        // let value = json!({
+        //     "temperature": 22.1,
+        //     "humidity": 57,
+        //     "rest": 0
+        // });
+        // let mut buffer = Vec::new();
+        // assert_eq!(5, schema.encode(&mut buffer, &value)?);
+        // let expected = [0xA2, 0x08, 0x39, 0, 0];
+        // assert_eq!(&expected, buffer.as_slice());
+        // let mut cursor = std::io::Cursor::new(buffer);
+
+        // let returned = schema.decode(&mut cursor)?;
+        // assert_eq!(value, returned);
+
+        Ok(())
+    }
+
+    #[test]
+    fn merge_bitfields() -> Result<()> {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "battery": {
+                    "type": "number",
+                    "offset": 1.6,
+                    "scale": 0.001,
+                    "length": 2,
+                    "bits": 11,
+                    "bitoffset": 5,
+                    "position": 50,
+                    "unit": "volts",
+                    "description": "Voltage of the battery powering the RuuviTag."
+                },
+                "txPower": {
+                    "type": "number",
+                    "offset": -40,
+                    "scale": 2,
+                    "length": 2,
+                    "bits": 5,
+                    "bitoffset": 0,
+                    "position": 50,
+                    "unit": "dBm",
+                    "description": "Transmission power in 1m distance."
+                }
+            }
+        });
+        let _schema = from_value::<DataSchema>(schema)?;
 
         Ok(())
     }

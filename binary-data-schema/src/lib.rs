@@ -217,6 +217,14 @@ impl DataSchema {
             DataSchema::Const { .. } => "const",
         }
     }
+    /// Check whether the data schema encodes to/from a bitfield.
+    pub fn is_bitfield(&self) -> bool {
+        match self {
+            DataSchema::Number(NumberSchema::Integer { integer: IntegerSchema::Bitfield(_), .. }) |
+            DataSchema::Integer(IntegerSchema::Bitfield(_)) => true,
+            _ => false,
+        }
+    }
 }
 
 impl TryFrom<RawDataSchema> for DataSchema {

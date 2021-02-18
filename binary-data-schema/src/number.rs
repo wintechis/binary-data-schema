@@ -276,4 +276,44 @@ mod test {
 
         Ok(())
     }
+
+    #[test]
+    fn bitfield2() -> Result<()> {
+        let schema = json!({
+            "type": "number",
+            "offset": -40,
+            "scale": 2,
+            "length": 2,
+            "bits": 5,
+            "bitoffset": 0,
+            "position": 50,
+            "unit": "dBm",
+            "description": "Transmission power in 1m distance."
+        });
+        let schema = from_value::<NumberSchema>(schema)?;
+        
+        println!("schema:\n{:#?}", schema);
+
+        Ok(())
+    }
+
+    #[test]
+    fn bitfield3() -> Result<()> {
+        let schema = json!({
+            "type": "number",
+            "offset": 1.6,
+            "scale": 0.001,
+            "length": 2,
+            "bits": 11,
+            "bitoffset": 5,
+            "position": 50,
+            "unit": "volts",
+            "description": "Voltage of the battery powering the RuuviTag."
+        });
+        let schema = from_value::<NumberSchema>(schema)?;
+        
+        println!("schema:\n{:#?}", schema);
+
+        Ok(())
+    }
 }

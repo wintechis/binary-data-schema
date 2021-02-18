@@ -1,6 +1,6 @@
 //! Implementation of the integer schema
 
-use crate::{ByteOrder, Decoder, Encoder, Error, Result};
+use crate::{ByteOrder, DataSchema, Decoder, Encoder, Error, Result, NumberSchema};
 use byteorder::{ReadBytesExt, WriteBytesExt, BE, LE};
 use serde::{de::Error as _, Deserialize, Deserializer};
 use serde_json::Value;
@@ -31,23 +31,36 @@ pub(crate) struct RawIntegerSchema {
 #[derive(Debug, Clone)]
 pub struct JoinedBitfield {
     bytes: usize,
-    fields: HashMap<String, Bitfield>,
+    fields: HashMap<String, DataSchema>,
 }
 
 impl JoinedBitfield {
-    pub fn join(bfs: HashMap<String, Bitfield>) -> Result<Self> {
-        let bytes = if let Some(bf) = bfs.values().next() {
+    pub fn join(bfs: HashMap<String, DataSchema>) -> Result<Self> {
+        if bfs.values().any(|ds| !ds.is_bitfield()) {
+            return Err(Error::NoBitfields);
+        }
+
+        let raw_bfs = bfs.iter().map(|(name, ds)| {
+            let bf = match ds {
+                DataSchema::Number(NumberSchema::Integer { integer: IntegerSchema::Bitfield(bf), .. }) |
+                DataSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
+                _ => unreachable!("ensured at beginning"),
+            };
+            (name.as_str(), bf)
+        }).collect::<HashMap<_, _>>();
+
+        let bytes = if let Some(bf) = raw_bfs.values().next() {
             bf.bytes
         } else {
             // Empty map
             return Err(Error::NoBitfields);
         };
 
-        if bfs.values().any(|bf| bf.bytes != bytes) {
+        if raw_bfs.values().any(|bf| bf.bytes != bytes) {
             return Err(Error::NotSameBytes);
         }
 
-        bfs.values().try_fold(0u64, |state, bf| {
+        raw_bfs.values().try_fold(0u64, |state, bf| {
             let mask = bf.mask();
             if state & mask != 0 {
                 Err(Error::OverlappingBitfields)
@@ -58,10 +71,20 @@ impl JoinedBitfield {
 
         Ok(Self { bytes, fields: bfs })
     }
+    fn raw_bfs(&self) -> impl Iterator<Item = (&'_ str, &'_ Bitfield)> {
+        self.fields.iter().map(|(name, ds)| {
+            let bf = match ds {
+                DataSchema::Number(NumberSchema::Integer { integer: IntegerSchema::Bitfield(bf), .. }) |
+                DataSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
+                _ => unreachable!("ensured at constructor"),
+            };
+            (name.as_str(), bf)
+        })
+    }
     /// Integer schema to encode the value of all bitfields.
     fn integer(&self) -> Integer {
-        self.fields
-            .values()
+        self.raw_bfs()
+            .map(|(_, bf)| bf)
             .next()
             .expect("Constuctor guarantees that there is at least one bitfield")
             .integer()
@@ -74,10 +97,10 @@ impl Encoder for JoinedBitfield {
         W: io::Write + WriteBytesExt,
     {
         let mut buffer = 0;
-        for (name, bf) in self.fields.iter() {
+        for (name, bf) in self.raw_bfs() {
             let value = value
                 .get(name)
-                .ok_or_else(|| Error::MissingField(name.clone()))?;
+                .ok_or_else(|| Error::MissingField(name.to_owned()))?;
             let value = value.as_u64().ok_or_else(|| Error::InvalidValue {
                 value: value.to_string(),
                 type_: "integer",
@@ -98,7 +121,7 @@ impl Decoder for JoinedBitfield {
         let int = self.integer();
         let int = int.decode(target)?.as_u64().expect("Is always u64");
         let mut res = Value::default();
-        for (name, bf) in self.fields.iter() {
+        for (name, bf) in self.raw_bfs() {
             let value = bf.read(int);
             res[name] = value.into();
         }
