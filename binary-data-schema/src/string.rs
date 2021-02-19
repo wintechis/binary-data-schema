@@ -89,6 +89,7 @@ impl Format {
     fn encode(&self, value: String) -> Result<Vec<u8>> {
         match self {
             Format::Utf8 => Ok(value.into_bytes()),
+            Format::Binary if value == "\0" => Ok(vec![0]),
             Format::Binary => hex::decode(value).map_err(Into::into),
         }
     }
@@ -569,6 +570,30 @@ mod test {
         let json: Value = value.clone().into();
         assert_eq!(5, schema.encode(&mut buffer, &json)?);
         let expected = [b'H', b'a', b'n', b's', 0x00];
+        assert_eq!(&expected, buffer.as_slice());
+
+        Ok(())
+    }
+
+    #[test]
+    fn default_pattern_binary() -> Result<()> {
+        println!("entry");
+        let schema = json!({
+            "lengthEncoding": { "type": "endpattern" },
+            "format": "binary",
+        });
+        println!("parse");
+        let schema: StringSchema = from_value(schema)?;
+        println!("ensure type");
+        assert!(matches!(schema.encoding, StringEncoding::EndPattern {..}));
+        
+        println!("encode");
+        let mut buffer = vec![];
+        let value = "6911dead".to_string();
+        let json: Value = value.clone().into();
+        assert_eq!(5, schema.encode(&mut buffer, &json)?);
+        println!("ensure result");
+        let expected = [0x69, 0x11, 0xde, 0xad, 0x00];
         assert_eq!(&expected, buffer.as_slice());
 
         Ok(())
