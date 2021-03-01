@@ -430,4 +430,39 @@ mod test {
 
         Ok(())
     }
+
+    #[test]
+    fn jsonld_context() -> Result<()> {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "test": {
+                    "type": "integer",
+                    "length": 1,
+                    "position": 10
+                }
+            },
+            "jsonld:context": "http://example.org/context.jsonld"
+        });
+        let schema = from_value::<DataSchema>(schema)?;
+        assert!(matches!(
+            schema,
+            DataSchema {
+                inner: InnerSchema::Object(ObjectSchema {context: Some(_), ..}),
+                ..
+            }
+        ));
+
+        let buffer = vec![0x10];
+        let mut cursor = std::io::Cursor::new(buffer);
+
+        let returned = schema.decode(&mut cursor)?;
+        let expected = json!({
+            "@context": "http://example.org/context.jsonld",
+            "test": 16
+        });
+        assert_eq!(returned, expected);
+
+        Ok(())
+    }
 }
