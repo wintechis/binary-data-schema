@@ -18,15 +18,38 @@ struct RawProperty {
     position: usize,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct RawObject {
-    properties: HashMap<String, RawProperty>,
-}
-
 #[derive(Debug, Clone)]
 pub enum PropertySchema {
     Simple { name: String, schema: DataSchema },
     Merged(JoinedBitfield),
+}
+
+#[derive(Debug, Clone)]
+pub struct Property {
+    position: usize,
+    schema: PropertySchema,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RawObject {
+    properties: HashMap<String, RawProperty>,
+    #[serde(rename = "jsonld:context")]
+    context: Option<Value>,
+}
+
+/// The object schema to describe structured data.
+///
+/// The position of a property within an object schema defines the order in
+/// which the properties are written to bytes.
+/// Property position do not have to be continuous but must be distinct. Except
+/// for bitfields in which case the same position signals that bitfields share
+/// the same bytes.
+///
+/// An instance of this type is guaranteed to be valid.
+#[derive(Debug, Clone)]
+pub struct ObjectSchema {
+    properties: Vec<Property>,
+    context: Option<Value>,
 }
 
 impl Encoder for PropertySchema {
@@ -82,26 +105,6 @@ impl PropertySchema {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Property {
-    position: usize,
-    schema: PropertySchema,
-}
-
-/// The object schema to describe structured data.
-///
-/// The position of a property within an object schema defines the order in
-/// which the properties are written to bytes.
-/// Property position do not have to be continuous but must be distinct. Except
-/// for bitfields in which case the same position signals that bitfields share
-/// the same bytes.
-///
-/// An instance of this type is guaranteed to be valid.
-#[derive(Debug, Clone)]
-pub struct ObjectSchema {
-    properties: Vec<Property>,
-}
-
 impl TryFrom<RawObject> for ObjectSchema {
     type Error = Error;
 
@@ -140,7 +143,10 @@ impl TryFrom<RawObject> for ObjectSchema {
         }
 
         properties.sort_by(|p1, p2| p1.position.cmp(&p2.position));
-        Ok(Self { properties })
+        Ok(Self {
+            properties,
+            context: raw.context,
+        })
     }
 }
 
@@ -176,6 +182,10 @@ impl Decoder for ObjectSchema {
         let mut value = serde_json::json!({});
         for p in self.properties.iter() {
             p.schema.decode_into(target, &mut value)?;
+        }
+
+        if let Some(ctx) = self.context.as_ref() {
+            value["@context"] = ctx.clone();
         }
 
         Ok(value)

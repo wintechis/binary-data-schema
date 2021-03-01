@@ -122,7 +122,6 @@ pub enum Error {
 pub struct DataSchema {
     inner: InnerSchema,
     const_: Option<Value>,
-    context: Option<Value>,
 }
 
 /// Raw data schema to catch constant values.
@@ -132,8 +131,6 @@ pub struct RawDataSchema {
     inner: InnerSchema,
     #[serde(rename = "const")]
     const_: Option<Value>,
-    #[serde(rename = "jsonld:context")]
-    context: Option<Value>,
 }
 
 /// The inner data schema without special features like `"const"` or
@@ -245,7 +242,6 @@ impl TryFrom<RawDataSchema> for DataSchema {
         Ok(Self {
             inner: raw.inner,
             const_: raw.const_,
-            context: raw.context,
         })
     }
 }
@@ -311,7 +307,6 @@ where
         Self {
             inner,
             const_: None,
-            context: None,
         }
     }
 }
@@ -334,13 +329,7 @@ impl Decoder for DataSchema {
     where
         R: io::Read + ReadBytesExt,
     {
-        let mut res = self.inner.decode(target)?;
-
-        if let Some(ctx) = &self.context {
-            res["@context"] = ctx.clone();
-        }
-
-        Ok(res)
+        self.inner.decode(target)
     }
 }
 
