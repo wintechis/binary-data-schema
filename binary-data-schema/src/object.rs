@@ -35,14 +35,17 @@ impl Encoder for PropertySchema {
         W: io::Write + WriteBytesExt,
     {
         match self {
-            PropertySchema::Simple {
-                schema: DataSchema::Const { schema, const_val },
-                ..
-            } => schema.encode(target, &const_val),
             PropertySchema::Simple { name, schema } => {
-                let value = value
-                    .get(name)
-                    .ok_or_else(|| Error::MissingField(name.clone()))?;
+                let value = match (value.get(name), schema.const_.as_ref()) {
+                    (Some(val), Some(c)) if val == c => Ok(val),
+                    (Some(val), Some(c)) => Err(Error::InvalidConstValue {
+                        expected: c.to_string(),
+                        got: val.to_string(),
+                    }),
+                    (Some(val), None) => Ok(val),
+                    (None, Some(c)) => Ok(c),
+                    (None, None) => Err(Error::MissingField(name.clone())),
+                }?;
                 schema.encode(target, value)
             }
             PropertySchema::Merged(schema) => schema.encode(target, value),
@@ -123,7 +126,7 @@ impl TryFrom<RawObject> for ObjectSchema {
                         if schema.is_bitfield() {
                             Ok((name, schema))
                         } else {
-                             Err(Error::InvalidPosition(position))
+                            Err(Error::InvalidPosition(position))
                         }
                     })
                     .collect();
@@ -182,6 +185,7 @@ impl Decoder for ObjectSchema {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::InnerSchema;
     use anyhow::Result;
     use serde_json::{from_value, json};
 
@@ -212,7 +216,13 @@ mod test {
             }
         });
         let schema = from_value::<DataSchema>(schema)?;
-        assert!(matches!(schema, DataSchema::Object(_)));
+        assert!(matches!(
+            schema,
+            DataSchema {
+                inner: InnerSchema::Object(_),
+                ..
+            }
+        ));
         let value = json!({
             "temperature": 22.1,
             "humidity": 57,
@@ -384,7 +394,13 @@ mod test {
         });
         let schema = from_value::<DataSchema>(schema)?;
         println!("schema:\n{:#?}", schema);
-        assert!(matches!(schema, DataSchema::Object(_)));
+        assert!(matches!(
+            schema,
+            DataSchema {
+                inner: InnerSchema::Object(_),
+                ..
+            }
+        ));
 
         let value = json!({
             "battery": 3.0,

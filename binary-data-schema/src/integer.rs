@@ -1,6 +1,6 @@
 //! Implementation of the integer schema
 
-use crate::{ByteOrder, DataSchema, Decoder, Encoder, Error, Result, NumberSchema};
+use crate::{ByteOrder, DataSchema, Decoder, Encoder, Error, InnerSchema, NumberSchema, Result};
 use byteorder::{ReadBytesExt, WriteBytesExt, BE, LE};
 use serde::{de::Error as _, Deserialize, Deserializer};
 use serde_json::Value;
@@ -40,14 +40,20 @@ impl JoinedBitfield {
             return Err(Error::NoBitfields);
         }
 
-        let raw_bfs = bfs.iter().map(|(name, ds)| {
-            let bf = match ds {
-                DataSchema::Number(NumberSchema::Integer { integer: IntegerSchema::Bitfield(bf), .. }) |
-                DataSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
-                _ => unreachable!("ensured at beginning"),
-            };
-            (name.as_str(), bf)
-        }).collect::<HashMap<_, _>>();
+        let raw_bfs = bfs
+            .iter()
+            .map(|(name, ds)| {
+                let bf = match ds.inner {
+                    InnerSchema::Number(NumberSchema::Integer {
+                        integer: IntegerSchema::Bitfield(bf),
+                        ..
+                    })
+                    | InnerSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
+                    _ => unreachable!("ensured at beginning"),
+                };
+                (name.as_str(), bf)
+            })
+            .collect::<HashMap<_, _>>();
 
         let bytes = if let Some(bf) = raw_bfs.values().next() {
             bf.bytes
@@ -73,9 +79,12 @@ impl JoinedBitfield {
     }
     fn raw_bfs(&self) -> impl Iterator<Item = (&'_ str, &'_ Bitfield)> {
         self.fields.iter().map(|(name, ds)| {
-            let bf = match ds {
-                DataSchema::Number(NumberSchema::Integer { integer: IntegerSchema::Bitfield(bf), .. }) |
-                DataSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
+            let bf = match &ds.inner {
+                InnerSchema::Number(NumberSchema::Integer {
+                    integer: IntegerSchema::Bitfield(bf),
+                    ..
+                })
+                | InnerSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
                 _ => unreachable!("ensured at constructor"),
             };
             (name.as_str(), bf)
@@ -98,15 +107,26 @@ impl Encoder for JoinedBitfield {
     {
         let mut buffer = 0;
         for (name, ds) in self.fields.iter() {
-            let value = value
-                .get(name)
-                .ok_or_else(|| Error::MissingField(name.to_owned()))?;
-            let bf = match ds {
-                DataSchema::Number(NumberSchema::Integer { integer: IntegerSchema::Bitfield(bf), .. }) |
-                DataSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
+            let value = match (value.get(name), ds.const_.as_ref()) {
+                (Some(val), Some(c)) if val == c => Ok(val),
+                (Some(val), Some(c)) => Err(Error::InvalidConstValue {
+                    expected: c.to_string(),
+                    got: val.to_string(),
+                }),
+                (Some(val), None) => Ok(val),
+                (None, Some(c)) => Ok(c),
+                (None, None) => Err(Error::MissingField(name.clone())),
+            }?;
+
+            let bf = match &ds.inner {
+                InnerSchema::Number(NumberSchema::Integer {
+                    integer: IntegerSchema::Bitfield(bf),
+                    ..
+                })
+                | InnerSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
                 _ => unreachable!("ensured at constructor"),
             };
-            let value = if let DataSchema::Number(ns) = ds {
+            let value = if let InnerSchema::Number(ns) = &ds.inner {
                 let value = value.as_f64().ok_or_else(|| Error::InvalidValue {
                     value: value.to_string(),
                     type_: "number",
@@ -135,13 +155,16 @@ impl Decoder for JoinedBitfield {
         let int = int.decode(target)?.as_u64().expect("Is always u64");
         let mut res = Value::default();
         for (name, ds) in self.fields.iter() {
-            let bf = match ds {
-                DataSchema::Number(NumberSchema::Integer { integer: IntegerSchema::Bitfield(bf), .. }) |
-                DataSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
+            let bf = match &ds.inner {
+                InnerSchema::Number(NumberSchema::Integer {
+                    integer: IntegerSchema::Bitfield(bf),
+                    ..
+                })
+                | InnerSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
                 _ => unreachable!("ensured at constructor"),
             };
             let value = bf.read(int);
-            if let DataSchema::Number(ns) = ds {
+            if let InnerSchema::Number(ns) = &ds.inner {
                 let value = ns.from_binary_value(value as _);
                 res[name] = value.into();
             } else {

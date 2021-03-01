@@ -563,7 +563,7 @@ mod test {
             "lengthEncoding": { "type": "endpattern" }
         });
         let schema: StringSchema = from_value(schema)?;
-        assert!(matches!(schema.encoding, StringEncoding::EndPattern {..}));
+        assert!(matches!(schema.encoding, StringEncoding::EndPattern { .. }));
 
         let mut buffer = vec![];
         let value = "Hans".to_string();
@@ -585,8 +585,8 @@ mod test {
         println!("parse");
         let schema: StringSchema = from_value(schema)?;
         println!("ensure type");
-        assert!(matches!(schema.encoding, StringEncoding::EndPattern {..}));
-        
+        assert!(matches!(schema.encoding, StringEncoding::EndPattern { .. }));
+
         println!("encode");
         let mut buffer = vec![];
         let value = "6911dead".to_string();
@@ -624,7 +624,7 @@ mod test {
             }
         });
         let schema: StringSchema = from_value(schema)?;
-        assert!(matches!(schema.encoding, StringEncoding::EndPattern{..}));
+        assert!(matches!(schema.encoding, StringEncoding::EndPattern { .. }));
 
         let mut buffer = vec![];
         let value = "Hans".to_string();
@@ -648,7 +648,7 @@ mod test {
             "maxLength": 10,
         });
         let schema: StringSchema = from_value(schema)?;
-        assert!(matches!(schema.encoding, StringEncoding::LenAndCap {..} ));
+        assert!(matches!(schema.encoding, StringEncoding::LenAndCap { .. }));
 
         let mut buffer = vec![];
         let value = "Hans".to_string();
@@ -683,7 +683,10 @@ mod test {
             "maxLength": 10
         });
         let schema: StringSchema = from_value(schema)?;
-        assert!(matches!(schema.encoding, StringEncoding::PatternAndCap {..}));
+        assert!(matches!(
+            schema.encoding,
+            StringEncoding::PatternAndCap { .. }
+        ));
 
         let mut buffer = vec![];
         let value = "Hans".to_string();

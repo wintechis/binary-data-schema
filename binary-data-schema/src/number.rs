@@ -291,7 +291,7 @@ mod test {
             "description": "Transmission power in 1m distance."
         });
         let schema = from_value::<NumberSchema>(schema)?;
-        
+
         println!("schema:\n{:#?}", schema);
 
         Ok(())
@@ -311,7 +311,7 @@ mod test {
             "description": "Voltage of the battery powering the RuuviTag."
         });
         let schema = from_value::<NumberSchema>(schema)?;
-        
+
         println!("schema:\n{:#?}", schema);
 
         Ok(())

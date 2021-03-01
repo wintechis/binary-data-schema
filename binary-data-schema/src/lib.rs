@@ -22,6 +22,21 @@ pub use self::object::*;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// A schema to serialize a value to bytes.
+pub trait Encoder {
+    /// Write a Json value according to the schema.
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
+    where
+        W: io::Write + WriteBytesExt;
+}
+
+/// A schema to de-serialize a value from bytes.
+pub trait Decoder {
+    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    where
+        R: io::Read + ReadBytesExt;
+}
+
 /// Errors from binary serialization.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -99,21 +114,39 @@ pub enum Error {
         #[source]
         source: Box<Error>,
     },
+    #[error("Expected the constant value {expected} but got {got}")]
+    InvalidConstValue { expected: String, got: String },
 }
 
-/// A schema to serialize a value to bytes.
-pub trait Encoder {
-    /// Write a Json value according to the schema.
-    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
-    where
-        W: io::Write + WriteBytesExt;
+#[derive(Debug, Clone)]
+pub struct DataSchema {
+    inner: InnerSchema,
+    const_: Option<Value>,
+    context: Option<Value>,
 }
 
-/// A schema to de-serialize a value from bytes.
-pub trait Decoder {
-    fn decode<R>(&self, target: &mut R) -> Result<Value>
-    where
-        R: io::Read + ReadBytesExt;
+/// Raw data schema to catch constant values.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawDataSchema {
+    #[serde(flatten)]
+    inner: InnerSchema,
+    #[serde(rename = "const")]
+    const_: Option<Value>,
+    #[serde(rename = "jsonld:context")]
+    context: Option<Value>,
+}
+
+/// The inner data schema without special features like `"const"` or
+/// `"jsonld:context"`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum InnerSchema {
+    Boolean(BooleanSchema),
+    Integer(IntegerSchema),
+    Number(NumberSchema),
+    String(StringSchema),
+    Array(Box<ArraySchema>),
+    Object(ObjectSchema),
 }
 
 #[derive(Debug, Copy, Clone, Deserialize, Eq, PartialEq)]
@@ -129,19 +162,8 @@ impl Default for ByteOrder {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-enum InnerSchema {
-    Boolean(BooleanSchema),
-    Integer(IntegerSchema),
-    Number(NumberSchema),
-    String(StringSchema),
-    Array(Box<ArraySchema>),
-    Object(ObjectSchema),
-}
-
 impl InnerSchema {
-    pub fn type_(&self) -> &'static str {
+    fn type_(&self) -> &'static str {
         match self {
             InnerSchema::Boolean(_) => "boolean",
             InnerSchema::Integer(_) => "integer",
@@ -151,18 +173,14 @@ impl InnerSchema {
             InnerSchema::Object(_) => "object",
         }
     }
-}
-
-impl From<InnerSchema> for DataSchema {
-    fn from(inner: InnerSchema) -> Self {
-        match inner {
-            InnerSchema::Boolean(schema) => schema.into(),
-            InnerSchema::Integer(schema) => schema.into(),
-            InnerSchema::Number(schema) => schema.into(),
-            InnerSchema::String(schema) => schema.into(),
-            InnerSchema::Array(schema) => schema.into(),
-            InnerSchema::Object(schema) => schema.into(),
-        }
+    fn is_bitfield(&self) -> bool {
+        matches!(
+            self,
+            Self::Number(NumberSchema::Integer {
+                integer: IntegerSchema::Bitfield(_),
+                ..
+            }) | Self::Integer(IntegerSchema::Bitfield(_))
+        )
     }
 }
 
@@ -182,48 +200,30 @@ impl Encoder for InnerSchema {
     }
 }
 
-/// Raw data schema to catch constant values.
-#[derive(Debug, Clone, Deserialize)]
-pub struct RawDataSchema {
-    #[serde(flatten)]
-    schema: InnerSchema,
-    #[serde(rename = "const")]
-    const_: Option<Value>,
-}
-
-#[derive(Debug, Clone)]
-pub enum DataSchema {
-    Boolean(BooleanSchema),
-    Integer(IntegerSchema),
-    Number(NumberSchema),
-    String(StringSchema),
-    Array(Box<ArraySchema>),
-    Object(ObjectSchema),
-    Const {
-        schema: Box<DataSchema>,
-        const_val: Value,
-    },
+impl Decoder for InnerSchema {
+    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    where
+        R: io::Read + ReadBytesExt,
+    {
+        match self {
+            InnerSchema::Boolean(schema) => schema.decode(target),
+            InnerSchema::Integer(schema) => schema.decode(target),
+            InnerSchema::Number(schema) => schema.decode(target),
+            InnerSchema::String(schema) => schema.decode(target),
+            InnerSchema::Array(schema) => schema.decode(target),
+            InnerSchema::Object(schema) => schema.decode(target),
+        }
+    }
 }
 
 impl DataSchema {
+    /// The `"type"` tags value.
     pub fn type_(&self) -> &'static str {
-        match self {
-            DataSchema::Boolean(_) => "boolean",
-            DataSchema::Integer(_) => "integer",
-            DataSchema::Number(_) => "number",
-            DataSchema::String(_) => "string",
-            DataSchema::Array(_) => "array",
-            DataSchema::Object(_) => "object",
-            DataSchema::Const { .. } => "const",
-        }
+        self.inner.type_()
     }
     /// Check whether the data schema encodes to/from a bitfield.
     pub fn is_bitfield(&self) -> bool {
-        match self {
-            DataSchema::Number(NumberSchema::Integer { integer: IntegerSchema::Bitfield(_), .. }) |
-            DataSchema::Integer(IntegerSchema::Bitfield(_)) => true,
-            _ => false,
-        }
+        self.inner.is_bitfield()
     }
 }
 
@@ -231,22 +231,22 @@ impl TryFrom<RawDataSchema> for DataSchema {
     type Error = Error;
 
     fn try_from(raw: RawDataSchema) -> Result<Self, Self::Error> {
-        if let Some(value) = raw.const_ {
+        if let Some(value) = &raw.const_ {
             let mut dummy = Vec::new();
-            match raw.schema.encode(&mut dummy, &value) {
-                Ok(_) => Ok(DataSchema::Const {
-                    schema: Box::new(raw.schema.into()),
-                    const_val: value,
-                }),
-                Err(e) => Err(Error::InvalidConst {
+            if let Err(e) = raw.inner.encode(&mut dummy, value) {
+                return Err(Error::InvalidConst {
                     value: value.to_string(),
-                    type_: raw.schema.type_(),
+                    type_: raw.inner.type_(),
                     source: Box::new(e),
-                }),
+                });
             }
-        } else {
-            Ok(raw.schema.into())
         }
+
+        Ok(Self {
+            inner: raw.inner,
+            const_: raw.const_,
+            context: raw.context,
+        })
     }
 }
 
@@ -260,45 +260,59 @@ impl<'de> Deserialize<'de> for DataSchema {
     }
 }
 
-impl From<ObjectSchema> for DataSchema {
+impl From<ObjectSchema> for InnerSchema {
     fn from(v: ObjectSchema) -> Self {
-        DataSchema::Object(v)
+        Self::Object(v)
     }
 }
 
-impl From<ArraySchema> for DataSchema {
+impl From<ArraySchema> for InnerSchema {
     fn from(v: ArraySchema) -> Self {
-        DataSchema::Array(Box::new(v))
+        Self::Array(Box::new(v))
     }
 }
 
-impl From<Box<ArraySchema>> for DataSchema {
+impl From<Box<ArraySchema>> for InnerSchema {
     fn from(v: Box<ArraySchema>) -> Self {
-        DataSchema::Array(v)
+        Self::Array(v)
     }
 }
 
-impl From<BooleanSchema> for DataSchema {
+impl From<BooleanSchema> for InnerSchema {
     fn from(v: BooleanSchema) -> Self {
-        DataSchema::Boolean(v)
+        Self::Boolean(v)
     }
 }
 
-impl From<IntegerSchema> for DataSchema {
+impl From<IntegerSchema> for InnerSchema {
     fn from(v: IntegerSchema) -> Self {
-        DataSchema::Integer(v)
+        Self::Integer(v)
     }
 }
 
-impl From<NumberSchema> for DataSchema {
+impl From<NumberSchema> for InnerSchema {
     fn from(v: NumberSchema) -> Self {
-        DataSchema::Number(v)
+        Self::Number(v)
     }
 }
 
-impl From<StringSchema> for DataSchema {
+impl From<StringSchema> for InnerSchema {
     fn from(v: StringSchema) -> Self {
-        DataSchema::String(v)
+        Self::String(v)
+    }
+}
+
+impl<S> From<S> for DataSchema
+where
+    S: Into<InnerSchema>,
+{
+    fn from(schema: S) -> Self {
+        let inner = schema.into();
+        Self {
+            inner,
+            const_: None,
+            context: None,
+        }
     }
 }
 
@@ -307,14 +321,10 @@ impl Encoder for DataSchema {
     where
         W: io::Write + WriteBytesExt,
     {
-        match self {
-            DataSchema::Boolean(schema) => schema.encode(target, value),
-            DataSchema::Integer(schema) => schema.encode(target, value),
-            DataSchema::Number(schema) => schema.encode(target, value),
-            DataSchema::String(schema) => schema.encode(target, value),
-            DataSchema::Array(schema) => schema.encode(target, value),
-            DataSchema::Object(schema) => schema.encode(target, value),
-            DataSchema::Const { schema, const_val } => schema.encode(target, &const_val),
+        if let Some(c) = &self.const_ {
+            self.inner.encode(target, c)
+        } else {
+            self.inner.encode(target, value)
         }
     }
 }
@@ -324,15 +334,13 @@ impl Decoder for DataSchema {
     where
         R: io::Read + ReadBytesExt,
     {
-        match self {
-            DataSchema::Boolean(dec) => dec.decode(target),
-            DataSchema::Integer(dec) => dec.decode(target),
-            DataSchema::Number(dec) => dec.decode(target),
-            DataSchema::String(dec) => dec.decode(target),
-            DataSchema::Array(dec) => dec.decode(target),
-            DataSchema::Object(dec) => dec.decode(target),
-            DataSchema::Const { schema: dec, .. } => dec.decode(target),
+        let mut res = self.inner.decode(target)?;
+
+        if let Some(ctx) = &self.context {
+            res["@context"] = ctx.clone();
         }
+
+        Ok(res)
     }
 }
 

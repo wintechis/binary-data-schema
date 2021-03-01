@@ -173,7 +173,13 @@ mod test {
             }
         });
         let schema = from_value::<ArraySchema>(schema)?;
-        assert!(matches!(schema, ArraySchema {length: LengthEncoding::Fixed {..}, ..}));
+        assert!(matches!(
+            schema,
+            ArraySchema {
+                length: LengthEncoding::Fixed { .. },
+                ..
+            }
+        ));
 
         let value = json!([false, true]);
         let mut buffer = vec![];
@@ -195,7 +201,13 @@ mod test {
             }
         });
         let schema = from_value::<ArraySchema>(schema)?;
-        assert!(matches!(schema, ArraySchema {length: LengthEncoding::ExplicitLength(_), ..}));
+        assert!(matches!(
+            schema,
+            ArraySchema {
+                length: LengthEncoding::ExplicitLength(_),
+                ..
+            }
+        ));
 
         let value = json!([false, true]);
         let mut buffer = vec![];
