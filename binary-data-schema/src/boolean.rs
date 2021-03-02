@@ -8,14 +8,17 @@ use serde_json::Value;
 use std::convert::TryFrom;
 use std::io;
 
+/// Default length of boolean schemata.
+pub const DEFAULT_LENGTH: usize = 1;
+
 /// Raw version of a Boolean schema. May hold invalid invariants.
 #[derive(Debug, Copy, Clone, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) struct RawBoolean {
+struct RawBoolean {
     #[serde(default = "BooleanSchema::default_length")]
-    pub(crate) length: usize,
+    length: usize,
     #[serde(default, rename = "bitoffset")]
-    pub(crate) offset: usize,
+    offset: usize,
 }
 
 /// The Boolean schema describes a Boolean value.
@@ -25,8 +28,6 @@ pub(crate) struct RawBoolean {
 pub struct BooleanSchema {
     bf: Bitfield,
 }
-
-pub const DEFAULT_LENGTH: usize = 1;
 
 impl BooleanSchema {
     pub fn default_length() -> usize {

@@ -11,7 +11,7 @@ use std::io;
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum LengthEncoding {
-    /// Requires `"minItems"` and  `"maxItems"` set to the same value.
+    /// Requires `"minItems"` and `"maxItems"` set to the same value.
     /// All array have that many entries. If there are more or less entries to
     /// encode an error is raised.
     Fixed { length: usize },

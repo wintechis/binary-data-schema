@@ -9,6 +9,9 @@ use serde_json::Value;
 use std::convert::TryFrom;
 use std::io;
 
+/// Character `\0` is used as default end and padding.
+pub const DEFAULT_CHAR: char = '\0';
+
 #[derive(Debug, thiserror::Error)]
 pub enum EncodingError {
     #[error("Encoding length failed: {0}")]
@@ -63,11 +66,60 @@ enum LengthEncoding {
     TillEnd,
 }
 
-pub const DEFAULT_END: char = '\0';
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Format {
+    #[serde(skip)]
+    Utf8,
+    Binary,
+}
+
+/// The string schema to describe string values.
+#[derive(Debug, Clone)]
+enum StringEncoding {
+    Fixed(usize),
+    LengthEncoded(IntegerSchema),
+    EndPattern {
+        encoded: Vec<u8>,
+        decoded: String,
+    },
+    LenAndCap {
+        length: IntegerSchema,
+        capacity: usize,
+        default_char: char,
+    },
+    PatternAndCap {
+        encoded: Vec<u8>,
+        decoded: String,
+        capacity: usize,
+        default_char: char,
+    },
+    TillEnd,
+}
+
+/// How is the length of variable sized data encoded.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawString {
+    #[serde(default)]
+    length_encoding: LengthEncoding,
+    max_length: Option<usize>,
+    min_length: Option<usize>,
+    #[serde(default = "StringEncoding::default_char")]
+    default_char: char,
+    format: Option<Format>,
+}
+
+/// The string schema to describe string values.
+#[derive(Debug, Clone)]
+pub struct StringSchema {
+    encoding: StringEncoding,
+    format: Format,
+}
 
 impl LengthEncoding {
     fn default_end() -> String {
-        DEFAULT_END.into()
+        DEFAULT_CHAR.into()
     }
 }
 
@@ -75,14 +127,6 @@ impl Default for LengthEncoding {
     fn default() -> Self {
         LengthEncoding::TillEnd
     }
-}
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum Format {
-    #[serde(skip)]
-    Utf8,
-    Binary,
 }
 
 impl Format {
@@ -107,19 +151,6 @@ impl Default for Format {
     }
 }
 
-/// How is the length of variable sized data encoded.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RawString {
-    #[serde(default)]
-    length_encoding: LengthEncoding,
-    max_length: Option<usize>,
-    min_length: Option<usize>,
-    #[serde(default = "StringEncoding::default_char")]
-    default_char: char,
-    format: Option<Format>,
-}
-
 impl RawString {
     fn valid_default_char(&self) -> Result<char> {
         if self.default_char.len_utf8() == 1 {
@@ -129,31 +160,6 @@ impl RawString {
         }
     }
 }
-
-/// The string schema to describe string values.
-#[derive(Debug, Clone)]
-pub enum StringEncoding {
-    Fixed(usize),
-    LengthEncoded(IntegerSchema),
-    EndPattern {
-        encoded: Vec<u8>,
-        decoded: String,
-    },
-    LenAndCap {
-        length: IntegerSchema,
-        capacity: usize,
-        default_char: char,
-    },
-    PatternAndCap {
-        encoded: Vec<u8>,
-        decoded: String,
-        capacity: usize,
-        default_char: char,
-    },
-    TillEnd,
-}
-
-pub const DEFAULT_CHAR: char = '\0';
 
 impl StringEncoding {
     pub fn default_char() -> char {
@@ -334,13 +340,6 @@ impl TryFrom<RawString> for StringEncoding {
             LengthEncoding::TillEnd => Ok(StringEncoding::TillEnd),
         }
     }
-}
-
-/// The string schema to describe string values.
-#[derive(Debug, Clone)]
-pub struct StringSchema {
-    encoding: StringEncoding,
-    format: Format,
 }
 
 impl<'de> Deserialize<'de> for StringSchema {

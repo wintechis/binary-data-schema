@@ -27,6 +27,28 @@ pub(crate) struct RawIntegerSchema {
     pub(crate) bit_offset: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct PlainInteger {
+    byteorder: ByteOrder,
+    length: usize,
+    signed: bool,
+}
+
+/// A schema referencing some bits within a chunk of bytes.
+#[derive(Debug, Clone, Copy)]
+pub struct Bitfield {
+    bytes: usize,
+    bits: usize,
+    offset: usize,
+}
+
+/// An integer schema. May refer to a bitfield.
+#[derive(Debug, Clone)]
+pub enum IntegerSchema {
+    Integer(PlainInteger),
+    Bitfield(Bitfield),
+}
+
 /// A set of bitfields that all write to the same bytes.
 #[derive(Debug, Clone)]
 pub struct JoinedBitfield {
@@ -91,7 +113,7 @@ impl JoinedBitfield {
         })
     }
     /// Integer schema to encode the value of all bitfields.
-    fn integer(&self) -> Integer {
+    fn integer(&self) -> PlainInteger {
         self.raw_bfs()
             .map(|(_, bf)| bf)
             .next()
@@ -176,14 +198,6 @@ impl Decoder for JoinedBitfield {
     }
 }
 
-/// A schema referencing some bits within a chunk of bytes.
-#[derive(Debug, Clone, Copy)]
-pub struct Bitfield {
-    bytes: usize,
-    bits: usize,
-    offset: usize,
-}
-
 impl Default for Bitfield {
     fn default() -> Self {
         Self {
@@ -255,8 +269,8 @@ impl Bitfield {
         *target |= value;
     }
     /// An integer schema to encode the bytes of the bitfield.
-    fn integer(&self) -> Integer {
-        Integer::new(ByteOrder::BigEndian, self.bytes, false)
+    fn integer(&self) -> PlainInteger {
+        PlainInteger::new(ByteOrder::BigEndian, self.bytes, false)
             .expect("Invariants of bitfield match those of integer")
     }
 }
@@ -315,14 +329,7 @@ impl TryFrom<RawIntegerSchema> for Bitfield {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Integer {
-    byteorder: ByteOrder,
-    length: usize,
-    signed: bool,
-}
-
-impl Integer {
+impl PlainInteger {
     pub fn new(byteorder: ByteOrder, length: usize, signed: bool) -> Result<Self> {
         if length > MAX_INTEGER_SIZE {
             Err(Error::MaxLength {
@@ -360,9 +367,9 @@ impl Integer {
     }
 }
 
-impl Default for Integer {
+impl Default for PlainInteger {
     fn default() -> Self {
-        Integer {
+        PlainInteger {
             length: IntegerSchema::default_length(),
             signed: IntegerSchema::default_signed(),
             byteorder: Default::default(),
@@ -370,7 +377,7 @@ impl Default for Integer {
     }
 }
 
-impl Encoder for Integer {
+impl Encoder for PlainInteger {
     fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
     where
         W: io::Write + WriteBytesExt,
@@ -390,7 +397,7 @@ impl Encoder for Integer {
     }
 }
 
-impl Decoder for Integer {
+impl Decoder for PlainInteger {
     fn decode<R>(&self, target: &mut R) -> Result<Value>
     where
         R: io::Read + ReadBytesExt,
@@ -404,19 +411,12 @@ impl Decoder for Integer {
     }
 }
 
-impl TryFrom<RawIntegerSchema> for Integer {
+impl TryFrom<RawIntegerSchema> for PlainInteger {
     type Error = Error;
 
     fn try_from(raw: RawIntegerSchema) -> Result<Self, Self::Error> {
         Self::new(raw.byteorder, raw.length, raw.signed)
     }
-}
-
-/// An integer schema. May refer to a bitfield.
-#[derive(Debug, Clone)]
-pub enum IntegerSchema {
-    Integer(Integer),
-    Bitfield(Bitfield),
 }
 
 impl IntegerSchema {
@@ -428,23 +428,23 @@ impl IntegerSchema {
     }
     /// Default integer schema with 8 bytes length.
     pub fn long_int() -> Self {
-        Integer::default_long().into()
+        PlainInteger::default_long().into()
     }
     /// Default integer schema with 1 byte length.
     pub fn short_int() -> Self {
-        Integer::default_short().into()
+        PlainInteger::default_short().into()
     }
     /// Encoded length in bytes.
     pub fn length(&self) -> usize {
         match self {
-            IntegerSchema::Integer(Integer { length, .. }) => *length,
+            IntegerSchema::Integer(PlainInteger { length, .. }) => *length,
             IntegerSchema::Bitfield(Bitfield { bytes, .. }) => *bytes,
         }
     }
     /// The theoretical maximal value that can be encoded.
     pub fn max_value(&self) -> usize {
         match self {
-            IntegerSchema::Integer(Integer { length, signed, .. }) => {
+            IntegerSchema::Integer(PlainInteger { length, signed, .. }) => {
                 let mut max = (1 << (length * 8)) - 1;
                 if *signed {
                     max >>= 1;
@@ -458,7 +458,7 @@ impl IntegerSchema {
 
 impl Default for IntegerSchema {
     fn default() -> Self {
-        Integer::default().into()
+        PlainInteger::default().into()
     }
 }
 
@@ -468,8 +468,8 @@ impl From<Bitfield> for IntegerSchema {
     }
 }
 
-impl From<Integer> for IntegerSchema {
-    fn from(integer: Integer) -> Self {
+impl From<PlainInteger> for IntegerSchema {
+    fn from(integer: PlainInteger) -> Self {
         IntegerSchema::Integer(integer)
     }
 }
@@ -480,7 +480,7 @@ impl TryFrom<RawIntegerSchema> for IntegerSchema {
     fn try_from(raw: RawIntegerSchema) -> Result<Self, Self::Error> {
         match Bitfield::try_from(raw.clone()) {
             Ok(bf) => Ok(bf.into()),
-            Err(e_bf) => match Integer::try_from(raw) {
+            Err(e_bf) => match PlainInteger::try_from(raw) {
                 Ok(int) => Ok(int.into()),
                 Err(e_int) => Err(Error::InvalidIntegerSchema {
                     bf: Box::new(e_bf),

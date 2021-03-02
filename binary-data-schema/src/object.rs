@@ -19,13 +19,13 @@ struct RawProperty {
 }
 
 #[derive(Debug, Clone)]
-pub enum PropertySchema {
+enum PropertySchema {
     Simple { name: String, schema: DataSchema },
     Merged(JoinedBitfield),
 }
 
 #[derive(Debug, Clone)]
-pub struct Property {
+struct Property {
     position: usize,
     schema: PropertySchema,
 }
@@ -448,7 +448,10 @@ mod test {
         assert!(matches!(
             schema,
             DataSchema {
-                inner: InnerSchema::Object(ObjectSchema {context: Some(_), ..}),
+                inner: InnerSchema::Object(ObjectSchema {
+                    context: Some(_),
+                    ..
+                }),
                 ..
             }
         ));

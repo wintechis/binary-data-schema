@@ -118,15 +118,19 @@ pub enum Error {
     InvalidConstValue { expected: String, got: String },
 }
 
-#[derive(Debug, Clone)]
-pub struct DataSchema {
-    inner: InnerSchema,
-    const_: Option<Value>,
+/// Order of bytes within a field.
+#[derive(Debug, Copy, Clone, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ByteOrder {
+    /// LSB first.
+    LittleEndian,
+    /// MSB first.
+    BigEndian,
 }
 
 /// Raw data schema to catch constant values.
 #[derive(Debug, Clone, Deserialize)]
-pub struct RawDataSchema {
+struct RawDataSchema {
     #[serde(flatten)]
     inner: InnerSchema,
     #[serde(rename = "const")]
@@ -146,11 +150,11 @@ pub enum InnerSchema {
     Object(ObjectSchema),
 }
 
-#[derive(Debug, Copy, Clone, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum ByteOrder {
-    LittleEndian,
-    BigEndian,
+/// The data schema is the typical type users will interact with.
+#[derive(Debug, Clone)]
+pub struct DataSchema {
+    inner: InnerSchema,
+    const_: Option<Value>,
 }
 
 impl Default for ByteOrder {
