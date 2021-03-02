@@ -1,4 +1,5 @@
 [workspace]
 members = [
   "binary-data-schema",
+  "bds-cli"
 ]

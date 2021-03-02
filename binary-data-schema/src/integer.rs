@@ -27,6 +27,7 @@ pub(crate) struct RawIntegerSchema {
     pub(crate) bit_offset: usize,
 }
 
+/// A simple integer schema.
 #[derive(Debug, Clone, Copy)]
 pub struct PlainInteger {
     byteorder: ByteOrder,

@@ -1,0 +1,23 @@
+[package]
+name = "bds-cli"
+version = "0.1.0"
+authors = ["Matthias Farnbauer-Schmidt <matthias.farnbauer-schmidt@fau.de>"]
+edition = "2018"
+description = "Meta language for raw binary serialization"
+repository = "https://github.com/wintechis/binary-data-schema"
+readme = "..README.md"
+homepage = "https://github.com/wintechis/binary-data-schema"
+license = "AGPL-3.0"
+keywords = ["binary", "schema"]
+categories = ["data-structures", "encoding"]
+documentation = "https://docs.rs/binary-data-schema/"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+hex = "0.4"
+anyhow = "1.0"
+structopt = "0.3"
+binary-data-schema = { version = "0.1", path = "../binary-data-schema" }

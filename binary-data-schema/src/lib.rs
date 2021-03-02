@@ -1,4 +1,13 @@
-//! Implementation of the binary data schema
+//! Binary Data Schema (BDS) is an extension of JSON schema. With this
+//! extension it is possible to convert JSON documents into raw bytes and
+//! reverse.
+//!
+//! The intention is to use BDS in [WoT Thing Descriptions] in order to allow
+//! `application/octet-stream` as a [content type for forms].
+//!
+//! [WoT Thing Descriptions]: https://www.w3.org/TR/wot-thing-description
+//! [content type for forms]: https://www.w3.org/TR/2020/NOTE-wot-binding-templates-20200130/#content-types
+
 
 #![warn(missing_debug_implementations)]
 
