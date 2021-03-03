@@ -68,7 +68,9 @@ impl<'de> Deserialize<'de> for BooleanSchema {
 }
 
 impl Encoder for BooleanSchema {
-    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
+    type Error = Error;
+
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
     where
         W: io::Write + WriteBytesExt,
     {
@@ -84,7 +86,9 @@ impl Encoder for BooleanSchema {
 }
 
 impl Decoder for BooleanSchema {
-    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    type Error = Error;
+
+    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
     where
         R: io::Read + ReadBytesExt,
     {

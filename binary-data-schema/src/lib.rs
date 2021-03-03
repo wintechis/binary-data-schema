@@ -118,15 +118,22 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// A schema to serialize a value to bytes.
 pub trait Encoder {
+    /// Error encoding a value.
+    type Error;
+
     /// Write a Json value according to the schema.
-    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
     where
         W: io::Write + WriteBytesExt;
 }
 
 /// A schema to de-serialize a value from bytes.
 pub trait Decoder {
-    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    /// Error decoding a value.
+    type Error;
+
+    /// Decode a value from a target with the given schema.
+    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
     where
         R: io::Read + ReadBytesExt;
 }
@@ -134,7 +141,15 @@ pub trait Decoder {
 /// Errors from binary serialization.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error(transparent)]
+    #[error("Invalid string schema: {0}")]
+    ValidateString(#[from] string::ValidationError),
+    #[error("Encoding with string schema failed: {0}")]
+    EncodeString(#[from] string::EncodingError),
+    #[error("Decoding with string schema failed: {0}")]
+    DecodeString(#[from] string::DecodingError),
+
+
+    #[error("Invalid JSON: {0}")]
     Serialization(#[from] serde_json::Error),
     #[error("IO Error: {0}")]
     IoFail(#[from] io::Error),
@@ -147,7 +162,7 @@ pub enum Error {
     #[error("Can't encode '{value}' as string: {source}")]
     StringEncoding {
         value: String,
-        source: self::string::EncodingError,
+        source: crate::string::EncodingError,
     },
     #[error("Invalid length requested: Maximum allowed is {max} but {requested} where requested")]
     MaxLength { max: usize, requested: usize },
@@ -167,10 +182,7 @@ pub enum Error {
     InvalidIntegerSchema { bf: Box<Error>, int: Box<Error> },
     #[error("The value '{value}' can not be encoded with a {type_} schema")]
     InvalidValue { value: String, type_: &'static str },
-    #[error("A fixed length string schema requires both 'maxLength' and 'minLength' given and having the same value")]
-    IncompleteFixedLength,
-    #[error("Length encoding 'capacity' requires 'maxLength'")]
-    MissingCapacity,
+    
     #[error("The default character has to be UTF8 encoded as one byte but '{0}' is encoded in {} bytes", .0.len_utf8())]
     InvalidDefaultChar(char),
     #[error("'{0}' is not a field in the schema")]
@@ -201,8 +213,7 @@ pub enum Error {
     InvalidPosition(usize),
     #[error("Can not decode value as the encoded lenght is {len} but capcacity is only {cap}")]
     EncodedValueExceedsCapacity { len: usize, cap: usize },
-    #[error("The encoded value '{read}' does not contain the endpattern '{pattern}'")]
-    NoPattern { read: String, pattern: String },
+
     #[error("The value '{value}' is invalid as 'const' for a {type_} schema: {source}")]
     InvalidConst {
         value: String,
@@ -212,8 +223,6 @@ pub enum Error {
     },
     #[error("Expected the constant value {expected} but got {got}")]
     InvalidConstValue { expected: String, got: String },
-    #[error("Endpattern and padding are limited to one byte but '{pattern}' is longer")]
-    InvalidPattern { pattern: String },
 }
 
 /// Order of bytes within a field.
@@ -284,34 +293,40 @@ impl InnerSchema {
 }
 
 impl Encoder for InnerSchema {
-    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
+    type Error = Error;
+
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
     where
         W: io::Write + WriteBytesExt,
     {
-        match self {
-            InnerSchema::Boolean(schema) => schema.encode(target, value),
-            InnerSchema::Integer(schema) => schema.encode(target, value),
-            InnerSchema::Number(schema) => schema.encode(target, value),
-            InnerSchema::String(schema) => schema.encode(target, value),
-            InnerSchema::Array(schema) => schema.encode(target, value),
-            InnerSchema::Object(schema) => schema.encode(target, value),
-        }
+        let written = match self {
+            InnerSchema::Boolean(schema) => schema.encode(target, value)?,
+            InnerSchema::Integer(schema) => schema.encode(target, value)?,
+            InnerSchema::Number(schema) => schema.encode(target, value)?,
+            InnerSchema::String(schema) => schema.encode(target, value)?,
+            InnerSchema::Array(schema) => schema.encode(target, value)?,
+            InnerSchema::Object(schema) => schema.encode(target, value)?,
+        };
+        Ok(written)
     }
 }
 
 impl Decoder for InnerSchema {
-    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    type Error = Error;
+
+    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
     where
         R: io::Read + ReadBytesExt,
     {
-        match self {
-            InnerSchema::Boolean(schema) => schema.decode(target),
-            InnerSchema::Integer(schema) => schema.decode(target),
-            InnerSchema::Number(schema) => schema.decode(target),
-            InnerSchema::String(schema) => schema.decode(target),
-            InnerSchema::Array(schema) => schema.decode(target),
-            InnerSchema::Object(schema) => schema.decode(target),
-        }
+        let value = match self {
+            InnerSchema::Boolean(schema) => schema.decode(target)?,
+            InnerSchema::Integer(schema) => schema.decode(target)?,
+            InnerSchema::Number(schema) => schema.decode(target)?,
+            InnerSchema::String(schema) => schema.decode(target)?,
+            InnerSchema::Array(schema) => schema.decode(target)?,
+            InnerSchema::Object(schema) => schema.decode(target)?,
+        };
+        Ok(value)
     }
 }
 
@@ -414,7 +429,9 @@ where
 }
 
 impl Encoder for DataSchema {
-    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
+    type Error = Error;
+
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
     where
         W: io::Write + WriteBytesExt,
     {
@@ -427,7 +444,9 @@ impl Encoder for DataSchema {
 }
 
 impl Decoder for DataSchema {
-    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    type Error = Error;
+
+    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
     where
         R: io::Read + ReadBytesExt,
     {

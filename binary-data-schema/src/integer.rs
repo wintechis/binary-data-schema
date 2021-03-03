@@ -124,7 +124,9 @@ impl JoinedBitfield {
 }
 
 impl Encoder for JoinedBitfield {
-    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
+    type Error = Error;
+
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
     where
         W: io::Write + WriteBytesExt,
     {
@@ -170,7 +172,9 @@ impl Encoder for JoinedBitfield {
 }
 
 impl Decoder for JoinedBitfield {
-    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    type Error = Error;
+
+    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
     where
         R: io::Read + ReadBytesExt,
     {
@@ -277,7 +281,9 @@ impl Bitfield {
 }
 
 impl Encoder for Bitfield {
-    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
+    type Error = Error;
+
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
     where
         W: io::Write + WriteBytesExt,
     {
@@ -293,7 +299,9 @@ impl Encoder for Bitfield {
 }
 
 impl Decoder for Bitfield {
-    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    type Error = Error;
+
+    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
     where
         R: io::Read + ReadBytesExt,
     {
@@ -379,7 +387,9 @@ impl Default for PlainInteger {
 }
 
 impl Encoder for PlainInteger {
-    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
+    type Error = Error;
+
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
     where
         W: io::Write + WriteBytesExt,
     {
@@ -399,7 +409,9 @@ impl Encoder for PlainInteger {
 }
 
 impl Decoder for PlainInteger {
-    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    type Error = Error;
+
+    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
     where
         R: io::Read + ReadBytesExt,
     {
@@ -503,7 +515,9 @@ impl<'de> Deserialize<'de> for IntegerSchema {
 }
 
 impl Encoder for IntegerSchema {
-    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
+    type Error = Error;
+
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
     where
         W: io::Write + WriteBytesExt,
     {
@@ -515,7 +529,9 @@ impl Encoder for IntegerSchema {
 }
 
 impl Decoder for IntegerSchema {
-    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    type Error = Error;
+
+    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
     where
         R: io::Read + ReadBytesExt,
     {

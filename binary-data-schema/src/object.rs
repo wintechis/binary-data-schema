@@ -56,7 +56,9 @@ pub struct ObjectSchema {
 }
 
 impl Encoder for PropertySchema {
-    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
+    type Error = Error;
+
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
     where
         W: io::Write + WriteBytesExt,
     {
@@ -164,7 +166,9 @@ impl<'de> Deserialize<'de> for ObjectSchema {
 }
 
 impl Encoder for ObjectSchema {
-    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
+    type Error = Error;
+
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
     where
         W: io::Write + WriteBytesExt,
     {
@@ -178,7 +182,9 @@ impl Encoder for ObjectSchema {
 }
 
 impl Decoder for ObjectSchema {
-    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    type Error = Error;
+
+    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
     where
         R: io::Read + ReadBytesExt,
     {

@@ -99,7 +99,9 @@ impl<'de> Deserialize<'de> for ArraySchema {
 }
 
 impl Encoder for ArraySchema {
-    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
+    type Error = Error;
+
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
     where
         W: io::Write + WriteBytesExt,
     {
@@ -124,7 +126,9 @@ impl Encoder for ArraySchema {
 }
 
 impl Decoder for ArraySchema {
-    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    type Error = Error;
+
+    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
     where
         R: io::Read + ReadBytesExt,
     {

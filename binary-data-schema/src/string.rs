@@ -15,12 +15,31 @@ use crate::{Decoder, Encoder, Error, IntegerSchema, Result};
 /// Character `\0` is used as default end and padding.
 pub const DEFAULT_CHAR: char = '\0';
 
+/// Errors validating a [StringSchema].
+#[derive(Debug, thiserror::Error)]
+pub enum ValidationError {
+    #[error("The given end 'sequence' or 'padding' is invalid: {0}")]
+    NotHexPattern(EncodingError),
+    #[error("End 'sequence' and 'padding' are limited to one byte but '{pattern}' is longer")]
+    InvalidPattern { pattern: String },
+    #[error("A fixed length string schema requires both 'maxLength' and 'minLength' given and having the same value")]
+    IncompleteFixedLength,
+    #[error("Length encoding 'capacity' requires 'maxLength'")]
+    MissingCapacity,
+}
+
+/// Errors encoding a string with a [StringSchema].
 #[derive(Debug, thiserror::Error)]
 pub enum EncodingError {
-    #[error("Encoding length failed: {0}")]
-    LengthEncoding(#[from] Box<Error>),
     #[error("Writing to buffer failed: {0}")]
     WriteFail(#[from] io::Error),
+    #[error("The provided string is not of 'binary' format: {0}")]
+    InvalidHexString(#[from] hex::FromHexError),
+    #[error("Encoding the value length failed: {0}")]
+    // todo change to crate::integer::EncodingError
+    LengthSchema(Box<Error>),
+
+
     #[error("Length of {len} bytes but only a fixed length of {fixed} is supported")]
     NotFixedLength { len: usize, fixed: usize },
     #[error("Contains the end sequence {0}")]
@@ -37,6 +56,36 @@ impl EncodingError {
             value,
             source: self,
         }
+    }
+}
+
+// todo: remove
+impl From<Error> for EncodingError {
+    fn from(e: Error) -> Self {
+        EncodingError::LengthSchema(Box::new(e))
+    }
+}
+
+/// Errors decoding a string with a [StringSchema].
+#[derive(Debug, thiserror::Error)]
+pub enum DecodingError {
+    #[error("Reading encoded data failed: {0}")]
+    ReadFail(#[from] io::Error),
+    #[error("The encoded string is not valid UTF-8: {0}")]
+    NonUtf8STring(#[from] std::string::FromUtf8Error),
+    #[error("The encoded string is not valid UTF-8: {0}")]
+    NonUtf8Bstr(#[from] bstr::FromUtf8Error),
+    #[error("Decoding the value length failed: {0}")]
+    // todo change to crate::integer::DecodingError
+    LengthSchema(Box<Error>),
+    #[error("The encoded value '{read}' does not contain the endpattern '{pattern}'")]
+    NoPattern { read: String, pattern: String },
+}
+
+// todo: remove
+impl From<Error> for DecodingError {
+    fn from(e: Error) -> Self {
+        DecodingError::LengthSchema(Box::new(e))
     }
 }
 
@@ -128,25 +177,25 @@ impl Default for RawLengthEncoding {
 }
 
 impl Format {
-    fn encode(&self, value: String) -> Result<Vec<u8>> {
+    fn encode(&self, value: String) -> Result<Vec<u8>, EncodingError> {
         match self {
             Format::Utf8 => Ok(value.into_bytes()),
             Format::Binary if value == "\0" => Ok(vec![0]),
             Format::Binary => hex::decode(value).map_err(Into::into),
         }
     }
-    fn decode(&self, value: Vec<u8>) -> Result<String> {
+    fn decode(&self, value: Vec<u8>) -> Result<String, DecodingError> {
         match self {
             Format::Utf8 => String::from_utf8(value).map_err(Into::into),
             Format::Binary => Ok(hex::encode(value)),
         }
     }
-    fn validate_pattern(&self, pattern: String) -> Result<u8> {
-        let encoded = self.encode(pattern.clone())?;
+    fn validate_pattern(&self, pattern: String) -> Result<u8, ValidationError> {
+        let encoded = self.encode(pattern.clone()).map_err(|e| ValidationError::NotHexPattern(e))?;
         if encoded.len() == 1 {
             Ok(encoded[0])
         } else {
-            Err(Error::InvalidPattern { pattern })
+            Err(ValidationError::InvalidPattern { pattern })
         }
     }
     /// State how much bytes are written for a given length string.
@@ -192,7 +241,7 @@ impl StringEncoding {
             }
             StringEncoding::LengthEncoded(int) => {
                 exceeds_length(value.len(), int)?;
-                int.encode(target, &value.len().into()).map_err(Box::new)?;
+                int.encode(target, &value.len().into())?;
                 target.write_all(&value)?;
             }
             StringEncoding::EndPattern { encoded, decoded } => {
@@ -216,7 +265,7 @@ impl StringEncoding {
 
         Ok(())
     }
-    fn decode<R>(&self, target: &mut R) -> Result<Vec<u8>>
+    fn decode<R>(&self, target: &mut R) -> Result<Vec<u8>, DecodingError>
     where
         R: io::Read + ReadBytesExt,
     {
@@ -250,7 +299,7 @@ impl StringEncoding {
 }
 
 impl TryFrom<RawString> for StringEncoding {
-    type Error = Error;
+    type Error = ValidationError;
 
     fn try_from(raw: RawString) -> Result<Self, Self::Error> {
         let fmt = raw.format.unwrap_or_default();
@@ -259,14 +308,14 @@ impl TryFrom<RawString> for StringEncoding {
             _ => {}
         }
         match raw.length_encoding {
-            RawLengthEncoding::Fixed => Err(Error::IncompleteFixedLength),
+            RawLengthEncoding::Fixed => Err(ValidationError::IncompleteFixedLength),
             RawLengthEncoding::ExplicitLength(schema) => Ok(StringEncoding::LengthEncoded(schema)),
             RawLengthEncoding::Capacity { padding } => {
                 let encoded = fmt.validate_pattern(padding.clone())?;
                 let capacity = if let Some(cap) = raw.max_length {
                     Ok(cap)
                 } else {
-                    Err(Error::MissingCapacity)
+                    Err(ValidationError::MissingCapacity)
                 }?;
                 Ok(StringEncoding::Capacity {
                     capacity,
@@ -299,7 +348,9 @@ impl<'de> Deserialize<'de> for StringSchema {
 }
 
 impl Encoder for StringSchema {
-    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize>
+    type Error = EncodingError;
+
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
     where
         W: io::Write + WriteBytesExt,
     {
@@ -319,7 +370,9 @@ impl Encoder for StringSchema {
 }
 
 impl Decoder for StringSchema {
-    fn decode<R>(&self, target: &mut R) -> Result<Value>
+    type Error = DecodingError;
+
+    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
     where
         R: io::Read + ReadBytesExt,
     {
@@ -391,7 +444,7 @@ fn fill_rest<W: io::Write>(
     Ok(to_fill)
 }
 
-fn read_str_with_length<R>(mut reader: R, length: usize) -> Result<Vec<u8>>
+fn read_str_with_length<R>(mut reader: R, length: usize) -> Result<Vec<u8>, DecodingError>
 where
     R: io::Read,
 {
@@ -405,7 +458,7 @@ fn read_str_with_pattern<R>(
     pattern: u8,
     max: usize,
     decoded_pattern: &str,
-) -> Result<Vec<u8>>
+) -> Result<Vec<u8>, DecodingError>
 where
     R: io::Read,
 {
@@ -421,7 +474,7 @@ where
         }
     }
 
-    Err(Error::NoPattern {
+    Err(DecodingError::NoPattern {
         read: buf.into_string()?,
         pattern: decoded_pattern.to_owned(),
     })
