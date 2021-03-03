@@ -1,12 +1,15 @@
 //! Implementation of the number schema
 
-use crate::{ByteOrder, Decoder, Encoder, Error, IntegerSchema, RawIntegerSchema, Result};
+use std::{convert::TryFrom, io};
+
 use byteorder::{ReadBytesExt, WriteBytesExt, BE, LE};
-use serde::de::{Deserializer, Error as DeError};
-use serde::Deserialize;
+use serde::{
+    de::{Deserializer, Error as DeError},
+    Deserialize,
+};
 use serde_json::Value;
-use std::convert::TryFrom;
-use std::io;
+
+use crate::{integer::RawIntegerSchema, ByteOrder, Decoder, Encoder, Error, IntegerSchema, Result};
 
 /// Raw version of a number schema. May hold invalid invariants.
 #[derive(Debug, Clone, Deserialize)]

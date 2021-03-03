@@ -1,33 +1,118 @@
-//! Binary Data Schema (BDS) is an extension of JSON schema. With this
+//! Binary Data Schema (BDS) is an extension of [JSON schema]. With this
 //! extension it is possible to convert JSON documents into raw bytes and
 //! reverse.
 //!
 //! The intention is to use BDS in [WoT Thing Descriptions] in order to allow
 //! `application/octet-stream` as a [content type for forms].
 //!
+//! # Features
+//!
+//! The specific features for each schema are explained in their submodule:
+//! - [boolean schema](boolean)
+//! - [integer schema](integer)
+//! - [number schema](number)
+//! - [string schema](string)
+//! - [array schema](array)
+//! - [object schema](object)
+//!
+//! BDS is by far not feature complete. If you do not find a feature described
+//! it is probably safe to assume that it is not yet implemented. If you
+//! require a specific feature [file an issue], please. PRs are also welcome.
+//!
+//! ## `const`
+//!
+//! The only feature described on this level is `const`.
+//!
+//! In general binary protocols often have some kind of _magic_ start and end
+//! bytes. To simulate those BDS uses the `const` keyword. When encoding a JSON
+//! document fields whose schema has a `const` value may not be provided.
+//!
+//! ### Example
+//!
+//! ```
+//! # use binary_data_schema::*;
+//! # use valico::json_schema;
+//! # use serde_json::{json, from_value};
+//! let schema = json!({
+//!     "type": "object",
+//!     "properties": {
+//!         "start": {
+//!             "type": "string",
+//!             "format": "binary",
+//!             "minLength": 2,
+//!             "maxLength": 2,
+//!             "const": "fe",
+//!             "position": 1
+//!         },
+//!         "is_on": {
+//!             "type": "boolean",
+//!             "position": 5
+//!         },
+//!         "end": {
+//!             "type": "string",
+//!             "format": "binary",
+//!             "minLength": 2,
+//!             "maxLength": 2,
+//!             "const": "ef",
+//!             "position": 10
+//!         }
+//!     },
+//!     "required": ["is_on"]
+//! });
+//! let mut scope = json_schema::Scope::new();
+//! let j_schema = scope.compile_and_return(schema.clone(), false)?;
+//! let schema = from_value::<DataSchema>(schema)?;
+//!
+//! let value = json!({ "is_on": true });
+//! assert!(j_schema.validate(&value).is_valid());
+//! let mut encoded = Vec::new();
+//! schema.encode(&mut encoded, &value)?;
+//! # let expected = [0xfe, 1, 0xef];
+//! # assert_eq!(&expected, encoded.as_slice());
+//!
+//! let mut encoded = std::io::Cursor::new(encoded);
+//! let back = schema.decode(&mut encoded)?;
+//! let expected = json!({
+//!     "start": "fe",
+//!     "is_on": true,
+//!     "end": "ef"
+//! });
+//! assert!(j_schema.validate(&back).is_valid());
+//! assert_eq!(back, expected);
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+//!
+//! - As you see fields with `const` are not required for encoding but included
+//!   when decoded.
+//! - To keep BDS aligned with [JSON schema] it is recommended to add
+//!   [`"required"`] to object schemata.
+//!
+//!
+//! [JSON schema]: https://json-schema.org/
 //! [WoT Thing Descriptions]: https://www.w3.org/TR/wot-thing-description
 //! [content type for forms]: https://www.w3.org/TR/2020/NOTE-wot-binding-templates-20200130/#content-types
-
+//! [file an issue]: https://github.com/wintechis/binary-data-schema/issues
+//! [`"required"`]: http://json-schema.org/understanding-json-schema/reference/object.html#required-properties
 
 #![warn(missing_debug_implementations)]
+
+pub mod array;
+pub mod boolean;
+pub mod integer;
+pub mod number;
+pub mod object;
+pub mod string;
+
+use std::{convert::TryFrom, io, string::FromUtf8Error};
 
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use serde::{de::Error as DeError, Deserialize, Deserializer};
 use serde_json::Value;
-use std::{convert::TryFrom, io, string::FromUtf8Error};
 
-mod integer;
-pub use self::integer::*;
-mod number;
-pub use self::number::*;
-mod boolean;
-pub use self::boolean::*;
-mod string;
-pub use self::string::*;
-mod array;
-pub use self::array::*;
-mod object;
-pub use self::object::*;
+use crate::{
+    array::ArraySchema, boolean::BooleanSchema, integer::IntegerSchema, number::NumberSchema,
+    object::ObjectSchema, string::StringSchema,
+};
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -68,41 +153,43 @@ pub enum Error {
     MaxLength { max: usize, requested: usize },
     #[error("The requsted length of {requested} is invalid for floating-point serialization. Either use 4 or 8 or use an integer encoding")]
     InvalidFloatingLength { requested: usize },
-    #[error("The requested offset of {requested} bits is invalid as only {max} bits are available in the field.")]
+    #[error("The requested offset of {requested} bits is invalid as only {max} bits are available in the field")]
     BitOffset { max: usize, requested: usize },
-    #[error("The requested fieldsize of {requested} bits is insufficient. It must be between 1 and {max} bits.")]
+    #[error("The requested fieldsize of {requested} bits is insufficient. It must be between 1 and {max} bits")]
     InvalidBitWidth { max: usize, requested: usize },
-    #[error("Can not join no bitfields.")]
+    #[error("Can not join no bitfields")]
     NoBitfields,
-    #[error("Can not join bitfields as they are overlapping.")]
+    #[error("Can not join bitfields as they are overlapping")]
     OverlappingBitfields,
-    #[error("Can not join bitfields with varing number of bytes.")]
+    #[error("Can not join bitfields with varing number of bytes")]
     NotSameBytes,
     #[error("Invalid integer schema. Not a bitfield: {bf}; nor an integer: {int}")]
     InvalidIntegerSchema { bf: Box<Error>, int: Box<Error> },
-    #[error("The value '{value}' can not be encoded with a {type_} schema.")]
+    #[error("The value '{value}' can not be encoded with a {type_} schema")]
     InvalidValue { value: String, type_: &'static str },
-    #[error("A fixed length string schema requires a 'maxLength' property.")]
+    #[error("A fixed length string schema requires both 'maxLength' and 'minLength' given and having the same value")]
+    IncompleteFixedLength,
+    #[error("Length encoding 'capacity' requires 'maxLength'")]
     MissingCapacity,
     #[error("The default character has to be UTF8 encoded as one byte but '{0}' is encoded in {} bytes", .0.len_utf8())]
     InvalidDefaultChar(char),
-    #[error("'{0}' is not a field in the schema.")]
+    #[error("'{0}' is not a field in the schema")]
     NotAField(String),
-    #[error("The field '{0}' is not present in the value to encode.")]
+    #[error("The field '{0}' is not present in the value to encode")]
     MissingField(String),
     #[error("A Json object was expected but got: {0}")]
     NotAnObject(String),
-    #[error("The length of an array must be encoded in some way.")]
+    #[error("The length of an array must be encoded in some way")]
     MissingArrayLength,
     #[error(
-        "Can not encode array {value} as its length is {len} but only length {fixed} is supported."
+        "Can not encode array {value} as its length is {len} but only length {fixed} is supported"
     )]
     NotMatchFixedLength {
         value: String,
         len: usize,
         fixed: usize,
     },
-    #[error("Can not encode array {value} as its length is {len} but only length up to {max} can be encoded.")]
+    #[error("Can not encode array {value} as its length is {len} but only length up to {max} can be encoded")]
     ExceededLengthEncoding {
         value: String,
         len: usize,
@@ -110,13 +197,13 @@ pub enum Error {
     },
     #[error("There are contrary specifications for a fixed-length array")]
     InconsitentFixedLength,
-    #[error("The position {0} has been used multiple times in the object schema but only bitfields are allowed to share a position.")]
+    #[error("The position {0} has been used multiple times in the object schema but only bitfields are allowed to share a position")]
     InvalidPosition(usize),
-    #[error("Can not decode value as the encoded lenght is {len} but capcacity is only {cap}.")]
+    #[error("Can not decode value as the encoded lenght is {len} but capcacity is only {cap}")]
     EncodedValueExceedsCapacity { len: usize, cap: usize },
-    #[error("The encoded value '{read}' does not contain the endpattern '{pattern}'.")]
+    #[error("The encoded value '{read}' does not contain the endpattern '{pattern}'")]
     NoPattern { read: String, pattern: String },
-    #[error("The value '{value}' is not of type '{type_}' because of {source}.")]
+    #[error("The value '{value}' is invalid as 'const' for a {type_} schema: {source}")]
     InvalidConst {
         value: String,
         type_: &'static str,
@@ -125,6 +212,8 @@ pub enum Error {
     },
     #[error("Expected the constant value {expected} but got {got}")]
     InvalidConstValue { expected: String, got: String },
+    #[error("Endpattern and padding are limited to one byte but '{pattern}' is longer")]
+    InvalidPattern { pattern: String },
 }
 
 /// Order of bytes within a field.
@@ -405,8 +494,8 @@ mod test {
                 "start": {
                     "type": "string",
                     "format": "binary",
-                    "minLength": 4,
-                    "maxLength": 4,
+                    "minLength": 8,
+                    "maxLength": 8,
                     "const": "7e000503",
                     "position": 1
                 },
@@ -434,8 +523,8 @@ mod test {
                 "end": {
                     "type": "string",
                     "format": "binary",
-                    "minLength": 2,
-                    "maxLength": 2,
+                    "minLength": 4,
+                    "maxLength": 4,
                     "const": "00ef",
                     "position": 10
                 }
@@ -466,8 +555,8 @@ mod test {
                 "start": {
                     "type": "string",
                     "format": "binary",
-                    "minLength": 3,
-                    "maxLength": 3,
+                    "minLength": 6,
+                    "maxLength": 6,
                     "const": "7e0004",
                     "position": 1
                 },
@@ -478,8 +567,8 @@ mod test {
                 "end": {
                     "type": "string",
                     "format": "binary",
-                    "minLength": 5,
-                    "maxLength": 5,
+                    "minLength": 10,
+                    "maxLength": 10,
                     "const": "00000000ef",
                     "position": 10
                 }
@@ -494,5 +583,57 @@ mod test {
         assert_eq!(&expected, buffer.as_slice());
 
         Ok(())
+    }
+
+    #[test]
+    fn doc() -> anyhow::Result<()> {
+        use super::*;
+        use serde_json::{from_value, json};
+        use valico::json_schema;
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "start": {
+                    "type": "string",
+                    "format": "binary",
+                    "minLength": 2,
+                    "maxLength": 2,
+                    "const": "fe",
+                    "position": 1
+                },
+                "is_on": {
+                    "type": "boolean",
+                    "position": 5
+                },
+                "end": {
+                    "type": "string",
+                    "format": "binary",
+                    "minLength": 2,
+                    "maxLength": 2,
+                    "const": "ef",
+                    "position": 10
+                }
+            },
+            "required": ["is_on"]
+        });
+        let mut scope = json_schema::Scope::new();
+        let j_schema = scope.compile_and_return(schema.clone(), false)?;
+        let schema = from_value::<DataSchema>(schema)?;
+        let value = json!({ "is_on": true });
+        assert!(j_schema.validate(&value).is_valid());
+        let mut encoded = Vec::new();
+        schema.encode(&mut encoded, &value)?;
+        let expected = [0xfe, 1, 0xef];
+        assert_eq!(&expected, encoded.as_slice());
+        let mut encoded = std::io::Cursor::new(encoded);
+        let back = schema.decode(&mut encoded)?;
+        let expected = json!({
+            "start": "fe",
+            "is_on": true,
+            "end": "ef"
+        });
+        assert!(j_schema.validate(&back).is_valid());
+        assert_eq!(back, expected);
+        Ok::<(), anyhow::Error>(())
     }
 }

@@ -1,12 +1,15 @@
 //! Implementation of the string schema
 
-use crate::{DataSchema, Decoder, Encoder, Error, JoinedBitfield, Result};
+use std::{collections::HashMap, convert::TryFrom, io};
+
 use byteorder::{ReadBytesExt, WriteBytesExt};
-use serde::de::{Deserializer, Error as DeError};
-use serde::Deserialize;
+use serde::{
+    de::{Deserializer, Error as DeError},
+    Deserialize,
+};
 use serde_json::Value;
-use std::io;
-use std::{collections::HashMap, convert::TryFrom};
+
+use crate::{integer::JoinedBitfield, DataSchema, Decoder, Encoder, Error, Result};
 
 /// A single property within an object schema.
 #[derive(Debug, Clone, Deserialize)]

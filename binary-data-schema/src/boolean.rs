@@ -1,12 +1,15 @@
 //! Implementation of the Boolean schema
 
-use crate::{Bitfield, Decoder, Encoder, Error, Result};
+use std::{convert::TryFrom, io};
+
 use byteorder::{ReadBytesExt, WriteBytesExt};
-use serde::de::{Deserializer, Error as DeError};
-use serde::Deserialize;
+use serde::{
+    de::{Deserializer, Error as DeError},
+    Deserialize,
+};
 use serde_json::Value;
-use std::convert::TryFrom;
-use std::io;
+
+use crate::{integer::Bitfield, Decoder, Encoder, Error, Result};
 
 /// Default length of boolean schemata.
 pub const DEFAULT_LENGTH: usize = 1;

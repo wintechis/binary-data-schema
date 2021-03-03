@@ -1,12 +1,12 @@
 //! Implementation of the integer schema
 
-use crate::{ByteOrder, DataSchema, Decoder, Encoder, Error, InnerSchema, NumberSchema, Result};
+use std::{collections::HashMap, convert::TryFrom, io};
+
 use byteorder::{ReadBytesExt, WriteBytesExt, BE, LE};
 use serde::{de::Error as _, Deserialize, Deserializer};
 use serde_json::Value;
-use std::collections::HashMap;
-use std::convert::TryFrom;
-use std::io;
+
+use crate::{ByteOrder, DataSchema, Decoder, Encoder, Error, InnerSchema, NumberSchema, Result};
 
 const MAX_INTEGER_SIZE: usize = 8;
 const DEFAULT_LENGTH: usize = 4;
