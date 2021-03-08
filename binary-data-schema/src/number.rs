@@ -9,7 +9,42 @@ use serde::{
 };
 use serde_json::Value;
 
-use crate::{integer::RawIntegerSchema, ByteOrder, Decoder, Encoder, Error, IntegerSchema, Result};
+use crate::{integer::RawIntegerSchema, ByteOrder, Decoder, Encoder, IntegerSchema};
+
+/// Errors validating a [NumberSchema].
+#[derive(Debug, thiserror::Error)]
+pub enum ValidationError {
+    #[error("Invalid bitfield: {0}")]
+    InvalidIntergerSchema(#[from] crate::integer::ValidationError),
+    #[error("The requsted length of {requested} is invalid for floating-point serialization. Either use 4 or 8 or use an integer-based encoding")]
+    InvalidFloatingLength { requested: usize },
+}
+
+/// Errors encoding a string with a [NumberSchema].
+#[derive(Debug, thiserror::Error)]
+pub enum EncodingError {
+    #[error("The value '{value}' can not be encoded with a number schema")]
+    InvalidValue { value: String },
+    #[error("Writing to buffer failed: {0}")]
+    WriteFail(#[from] io::Error),
+    #[error("Failed to encode as integer: {0}")]
+    Integer(#[from] crate::integer::EncodingError),
+}
+
+/// Errors decoding a string with a [NumberSchema].
+#[derive(Debug, thiserror::Error)]
+pub enum DecodingError {
+    #[error("Reading encoded data failed: {0}")]
+    ReadFail(#[from] io::Error),
+    #[error("Failed to decode underlying integer: {0}")]
+    Integer(#[from] crate::integer::DecodingError),
+}
+
+impl DecodingError {
+    pub fn due_to_eof(&self) -> bool {
+        matches!(self, Self::ReadFail(e) if e.kind() == std::io::ErrorKind::UnexpectedEof)
+    }
+}
 
 /// Raw version of a number schema. May hold invalid invariants.
 #[derive(Debug, Clone, Deserialize)]
@@ -54,20 +89,6 @@ impl NumberSchema {
     pub fn default_offset() -> f64 {
         DEFAULT_OFFSET
     }
-    pub fn new_integer(integer: IntegerSchema, scale: f64, offset: f64) -> Self {
-        NumberSchema::Integer {
-            integer,
-            scale,
-            offset,
-        }
-    }
-    pub fn new_raw(length: usize, byteorder: ByteOrder) -> Result<Self> {
-        match length {
-            4 => Ok(NumberSchema::Float { byteorder }),
-            8 => Ok(NumberSchema::Double { byteorder }),
-            _ => Err(Error::InvalidFloatingLength { requested: length }),
-        }
-    }
     /// Apply scale and offset to the value.
     pub fn to_binary_value(&self, value: f64) -> i64 {
         match self {
@@ -92,7 +113,7 @@ impl NumberSchema {
 }
 
 impl TryFrom<RawNumber> for NumberSchema {
-    type Error = Error;
+    type Error = ValidationError;
 
     fn try_from(value: RawNumber) -> Result<Self, Self::Error> {
         if value.scale.is_some() || value.offset.is_some() {
@@ -110,7 +131,7 @@ impl TryFrom<RawNumber> for NumberSchema {
                 8 => Ok(NumberSchema::Double {
                     byteorder: value.raw_int.byteorder,
                 }),
-                _ => Err(Error::InvalidFloatingLength {
+                _ => Err(ValidationError::InvalidFloatingLength {
                     requested: value.raw_int.length,
                 }),
             }
@@ -129,15 +150,14 @@ impl<'de> Deserialize<'de> for NumberSchema {
 }
 
 impl Encoder for NumberSchema {
-    type Error = Error;
+    type Error = EncodingError;
 
     fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
     where
         W: io::Write + WriteBytesExt,
     {
-        let value = value.as_f64().ok_or_else(|| Error::InvalidValue {
+        let value = value.as_f64().ok_or_else(|| EncodingError::InvalidValue {
             value: value.to_string(),
-            type_: "number",
         })?;
         let length = match self {
             NumberSchema::Integer { integer, .. } => {
@@ -167,7 +187,7 @@ impl Encoder for NumberSchema {
 }
 
 impl Decoder for NumberSchema {
-    type Error = Error;
+    type Error = DecodingError;
 
     fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
     where

@@ -9,10 +9,41 @@ use serde::{
 };
 use serde_json::Value;
 
-use crate::{integer::Bitfield, Decoder, Encoder, Error, Result};
+use crate::{integer::Bitfield, Decoder, Encoder};
 
 /// Default length of boolean schemata.
 pub const DEFAULT_LENGTH: usize = 1;
+
+/// Errors validating a [BooleanSchema].
+#[derive(Debug, thiserror::Error)]
+pub enum ValidationError {
+    #[error(transparent)]
+    InvalidBitAddressing(#[from] crate::integer::ValidationError),
+}
+
+/// Errors encoding a string with a [BooleanSchema].
+#[derive(Debug, thiserror::Error)]
+pub enum EncodingError {
+    #[error("The value '{value}' can not be encoded with a boolean schema")]
+    InvalidValue { value: String },
+    #[error("Failed to encode flag: {0}")]
+    Bitfield(#[from] crate::integer::EncodingError),
+}
+
+/// Errors decoding a string with a [BooleanSchema].
+#[derive(Debug, thiserror::Error)]
+pub enum DecodingError {
+    #[error("Failed to decode flag: {0}")]
+    Bitfield(#[from] crate::integer::DecodingError),
+}
+
+impl DecodingError {
+    pub fn due_to_eof(&self) -> bool {
+        match &self {
+            Self::Bitfield(e) => e.due_to_eof(),
+        }
+    }
+}
 
 /// Raw version of a Boolean schema. May hold invalid invariants.
 #[derive(Debug, Copy, Clone, Deserialize)]
@@ -48,7 +79,7 @@ impl From<Bitfield> for BooleanSchema {
 }
 
 impl TryFrom<RawBoolean> for BooleanSchema {
-    type Error = Error;
+    type Error = ValidationError;
 
     fn try_from(raw: RawBoolean) -> Result<Self, Self::Error> {
         let bf = Bitfield::new(raw.length, 1, raw.offset)?;
@@ -68,15 +99,14 @@ impl<'de> Deserialize<'de> for BooleanSchema {
 }
 
 impl Encoder for BooleanSchema {
-    type Error = Error;
+    type Error = EncodingError;
 
     fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
     where
         W: io::Write + WriteBytesExt,
     {
-        let value = value.as_bool().ok_or_else(|| Error::InvalidValue {
+        let value = value.as_bool().ok_or_else(|| EncodingError::InvalidValue {
             value: value.to_string(),
-            type_: "boolean",
         })?;
         let int = if value { 1 } else { 0 };
         let written = self.bf.encode(target, &int.into())?;
@@ -86,7 +116,7 @@ impl Encoder for BooleanSchema {
 }
 
 impl Decoder for BooleanSchema {
-    type Error = Error;
+    type Error = DecodingError;
 
     fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
     where

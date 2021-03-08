@@ -9,25 +9,81 @@ use serde::{
 };
 use serde_json::Value;
 
-use crate::{DataSchema, Decoder, Encoder, Error, IntegerSchema, Result};
+use crate::{
+    integer::{self as int, IntegerSchema},
+    util::*,
+    DataSchema, Decoder, Encoder, Error, Result,
+};
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-enum LengthEncoding {
-    /// Requires `"minItems"` and `"maxItems"` set to the same value.
-    /// All array have that many entries. If there are more or less entries to
-    /// encode an error is raised.
-    Fixed { length: usize },
-    /// The number of entries in the array is stored as the beginning using the
-    /// given integer schema.
-    ExplicitLength(IntegerSchema),
+/// Errors validating an [ArraySchema].
+#[derive(Debug, thiserror::Error)]
+pub enum ValidationError {
+    #[error("A fixed length array schema requires both 'maxItems' and 'minItems' given and having the same value")]
+    IncompleteFixedLength,
+    #[error("Patterns and/or paddings must be encodable with the given schema: '{value}' can not be encoded with a {type_} schema: {error}")]
+    InvalidPatternOrPadding {
+        value: Value,
+        type_: &'static str,
+        error: Box<Error>,
+    },
+    #[error("Length encoding 'capacity' requires 'maxItems'")]
+    MissingCapacity,
+}
+
+/// Errors encoding a string with an [ArraySchema].
+#[derive(Debug, thiserror::Error)]
+pub enum EncodingError {
+    #[error("The value '{value}' can not be encoded with an array schema")]
+    InvalidValue { value: String },
+    #[error("Writing to buffer failed: {0}")]
+    WriteFail(#[from] io::Error),
+    #[error("Could not encode length: {0}")]
+    EncodingLength(#[from] int::EncodingError),
+    #[error("Encoding sub-schema failed: {0}")]
+    SubSchema(Box<Error>),
+    #[error("{len} elements in array but only a fixed number of {fixed} elements is supported")]
+    NotFixedLength { len: usize, fixed: usize },
+    #[error("{len} elements in the array but only a length up to {max} elementy can be encoded")]
+    ExceedsLengthEncoding { len: usize, max: usize },
+    #[error("Array contains the end pattern or the padding {0}")]
+    ContainsPatternOrPadding(Value),
+    #[error("{len} elements in array but only values up to {cap} elements are valid")]
+    ExceedsCapacity { len: usize, cap: usize },
+}
+
+impl From<Error> for EncodingError {
+    fn from(e: Error) -> Self {
+        EncodingError::SubSchema(Box::new(e))
+    }
+}
+
+/// Errors decoding a string with an [ArraySchema].
+#[derive(Debug, thiserror::Error)]
+pub enum DecodingError {
+    #[error("Reading encoded data failed: {0}")]
+    ReadFail(#[from] io::Error),
+    #[error("Decoding sub-schema failed: {0}")]
+    SubSchema(Box<Error>),
+}
+
+impl From<Error> for DecodingError {
+    fn from(e: Error) -> Self {
+        DecodingError::SubSchema(Box::new(e))
+    }
+}
+
+impl DecodingError {
+    pub fn due_to_eof(&self) -> bool {
+        matches!(self, Self::ReadFail(e) if e.kind() == std::io::ErrorKind::UnexpectedEof)
+    }
 }
 
 /// How is the length of variable sized data encoded.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawArray {
-    length_encoding: Option<IntegerSchema>,
+    #[serde(default)]
+    length_encoding: RawLengthEncoding,
     max_items: Option<usize>,
     min_items: Option<usize>,
     items: DataSchema,
@@ -38,52 +94,50 @@ struct RawArray {
 /// Contrary to the JSON schema's array schema tuples are not supported.
 #[derive(Debug, Clone)]
 pub struct ArraySchema {
-    length: LengthEncoding,
+    length: LengthEncoding<Value>,
     items: DataSchema,
 }
 
-impl ArraySchema {
-    fn valid_slice<T: std::fmt::Debug>(&self, slice: &[T]) -> Result<()> {
-        match &self.length {
-            LengthEncoding::Fixed { length } => {
-                if slice.len() != *length {
-                    Err(Error::NotMatchFixedLength {
-                        value: format!("{:?}", slice),
-                        len: slice.len(),
-                        fixed: *length,
-                    })
-                } else {
-                    Ok(())
-                }
-            }
-            LengthEncoding::ExplicitLength(schema) => {
-                if schema.max_value() < slice.len() {
-                    Err(Error::ExceededLengthEncoding {
-                        value: format!("{:?}", slice),
-                        len: slice.len(),
-                        max: schema.max_value(),
-                    })
-                } else {
-                    Ok(())
-                }
-            }
-        }
+fn validate_value(value: &Value, schema: &DataSchema) -> Result<(), ValidationError> {
+    let mut buf = Vec::new();
+    match schema.encode(&mut buf, value) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(ValidationError::InvalidPatternOrPadding {
+            value: value.clone(),
+            type_: schema.type_(),
+            error: Box::new(e),
+        }),
     }
 }
 
 impl TryFrom<RawArray> for ArraySchema {
-    type Error = Error;
+    type Error = ValidationError;
 
     fn try_from(raw: RawArray) -> Result<Self, Self::Error> {
-        let length = match (raw.min_items, raw.max_items, raw.length_encoding) {
-            (Some(min), Some(max), None) if min == max => LengthEncoding::Fixed { length: max },
-            (_, _, None) => return Err(Error::MissingArrayLength),
-            (_, _, Some(schema)) => LengthEncoding::ExplicitLength(schema),
-        };
+        let schema = raw.items;
+        let length = match (raw.min_items, raw.max_items) {
+            (Some(min), Some(max)) if min == max => Ok(LengthEncoding::Fixed(min)),
+            _ => match raw.length_encoding {
+                RawLengthEncoding::Fixed => Err(ValidationError::IncompleteFixedLength),
+                RawLengthEncoding::ExplicitLength(schema) => {
+                    Ok(LengthEncoding::LengthEncoded(schema))
+                }
+                RawLengthEncoding::EndPattern { pattern } => {
+                    validate_value(&pattern, &schema)?;
+                    Ok(LengthEncoding::EndPattern { pattern })
+                }
+                RawLengthEncoding::Capacity { padding } => {
+                    let capacity = raw.max_items.ok_or(ValidationError::MissingCapacity)?;
+                    validate_value(&padding, &schema)?;
+                    Ok(LengthEncoding::Capacity { padding, capacity })
+                }
+                RawLengthEncoding::TillEnd => Ok(LengthEncoding::TillEnd),
+            },
+        }?;
 
         Ok(Self {
             length,
-            items: raw.items,
+            items: schema,
         })
     }
 }
@@ -98,29 +152,107 @@ impl<'de> Deserialize<'de> for ArraySchema {
     }
 }
 
+impl ArraySchema {
+    pub fn byte_array(length: LengthEncoding<Value>) -> Result<Self, ValidationError> {
+        let byte_schema = IntegerSchema::unsigned_byte().into();
+        match &length {
+            LengthEncoding::EndPattern { pattern: value }
+            | LengthEncoding::Capacity { padding: value, .. } => {
+                validate_value(value, &byte_schema)?;
+            }
+            _ => {}
+        }
+
+        Ok(Self {
+            length,
+            items: byte_schema,
+        })
+    }
+    fn valid_slice(&self, slice: &[Value]) -> Result<(), EncodingError> {
+        match &self.length {
+            LengthEncoding::Fixed(length) => {
+                if slice.len() != *length {
+                    Err(EncodingError::NotFixedLength {
+                        len: slice.len(),
+                        fixed: *length,
+                    })
+                } else {
+                    Ok(())
+                }
+            }
+            LengthEncoding::LengthEncoded(schema) => {
+                if schema.max_value() < slice.len() {
+                    Err(EncodingError::ExceedsLengthEncoding {
+                        len: slice.len(),
+                        max: schema.max_value(),
+                    })
+                } else {
+                    Ok(())
+                }
+            }
+            LengthEncoding::EndPattern { pattern } => {
+                if slice.iter().any(|v| v == pattern) {
+                    Err(EncodingError::ContainsPatternOrPadding(pattern.clone()))
+                } else {
+                    Ok(())
+                }
+            }
+            LengthEncoding::Capacity { padding, capacity } => {
+                if *capacity < slice.len() {
+                    Err(EncodingError::ExceedsCapacity {
+                        len: slice.len(),
+                        cap: *capacity,
+                    })
+                } else if slice.iter().any(|v| v == padding) {
+                    Err(EncodingError::ContainsPatternOrPadding(padding.clone()))
+                } else {
+                    Ok(())
+                }
+            }
+            LengthEncoding::TillEnd => Ok(()),
+        }
+    }
+}
+
 impl Encoder for ArraySchema {
-    type Error = Error;
+    type Error = EncodingError;
 
     fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
     where
         W: io::Write + WriteBytesExt,
     {
-        let value = value.as_array().ok_or_else(|| Error::InvalidValue {
-            value: value.to_string(),
-            type_: "array",
-        })?;
+        let value = value
+            .as_array()
+            .ok_or_else(|| EncodingError::InvalidValue {
+                value: value.to_string(),
+            })?;
+        let len = value.len();
         self.valid_slice(value)?;
 
-        let mut written = match &self.length {
-            LengthEncoding::Fixed { .. } => 0,
-            LengthEncoding::ExplicitLength(len_schema) => {
-                let len = value.len().into();
-                len_schema.encode(target, &len)?
-            }
-        };
+        let mut written = 0;
+        // pre-value
+        if let LengthEncoding::LengthEncoded(schema) = &self.length {
+            let len = len as u64;
+            written += schema.encode(target, &(len.into()))?;
+        }
+        // write array
         for v in value.iter() {
             written += self.items.encode(target, v)?;
         }
+        // post-value
+        match &self.length {
+            LengthEncoding::EndPattern { pattern } => {
+                written += self.items.encode(target, pattern)?;
+            }
+            LengthEncoding::Capacity { padding, capacity } => {
+                let left = *capacity - len;
+                for _ in 0..left {
+                    written += self.items.encode(target, padding)?;
+                }
+            }
+            _ => {}
+        }
+
         Ok(written)
     }
 }
@@ -132,17 +264,48 @@ impl Decoder for ArraySchema {
     where
         R: io::Read + ReadBytesExt,
     {
-        let len = match &self.length {
-            LengthEncoding::Fixed { length } => *length,
-            LengthEncoding::ExplicitLength(lenght_dec) => lenght_dec
-                .decode(target)?
-                .as_u64()
-                .expect("counts are always unsigned ints")
-                as _,
+        let elements = match &self.length {
+            LengthEncoding::Fixed(len) => (0..*len)
+                .map(|_| self.items.decode(target))
+                .collect::<Result<Vec<_>, _>>()?,
+            LengthEncoding::LengthEncoded(schema) => {
+                let len = schema
+                    .decode(target)?
+                    .as_u64()
+                    .expect("counts are always unsigned ints");
+                (0..len)
+                    .map(|_| self.items.decode(target))
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+            LengthEncoding::EndPattern { pattern }
+            | LengthEncoding::Capacity {
+                padding: pattern, ..
+            } => {
+                let mut elements = Vec::new();
+                loop {
+                    let element = self.items.decode(target)?;
+                    if element != *pattern {
+                        elements.push(element);
+                    } else {
+                        break;
+                    }
+                }
+                elements
+            }
+            LengthEncoding::TillEnd => {
+                let mut elements = Vec::new();
+                loop {
+                    match self.items.decode(target) {
+                        Ok(element) => elements.push(element),
+                        Err(e) if e.due_to_eof() => break,
+                        Err(e) => return Err(e.into()),
+                    }
+                }
+                elements
+            }
         };
 
-        let elements: Result<Vec<_>, _> = (0..len).map(|_| self.items.decode(target)).collect();
-        Ok(elements?.into())
+        Ok(elements.into())
     }
 }
 
@@ -211,7 +374,7 @@ mod test {
         assert!(matches!(
             schema,
             ArraySchema {
-                length: LengthEncoding::ExplicitLength(_),
+                length: LengthEncoding::LengthEncoded(_),
                 ..
             }
         ));

@@ -9,7 +9,75 @@ use serde::{
 };
 use serde_json::Value;
 
-use crate::{integer::JoinedBitfield, DataSchema, Decoder, Encoder, Error, Result};
+use crate::{
+    integer::{Bitfield, PlainInteger},
+    DataSchema, Decoder, Encoder, Error, InnerSchema, IntegerSchema, NumberSchema, Result,
+};
+
+/// Errors validating an [ObjectSchema].
+#[derive(Debug, thiserror::Error)]
+pub enum ValidationError {
+    #[error("Can not join bitfields as there are none")]
+    NoBitfields,
+    #[error("Can not join bitfields with different number of bytes")]
+    NotSameBytes,
+    #[error("Can not join bitfields as they are overlapping")]
+    OverlappingBitfields,
+    #[error("The position {0} has been used multiple times in the object schema but only bitfields are allowed to share a position")]
+    InvalidPosition(usize),
+}
+
+/// Errors encoding a string with an [ObjectSchema].
+#[derive(Debug, thiserror::Error)]
+pub enum EncodingError {
+    #[error("The value '{value}' can not be encoded with an object schema")]
+    InvalidValue { value: String },
+    #[error("Writing to buffer failed: {0}")]
+    WriteFail(#[from] io::Error),
+    #[error("Expected the constant value {expected} but got {got}")]
+    InvalidConstValue { expected: String, got: String },
+    #[error("The field '{0}' is not present in the value to encode")]
+    MissingField(String),
+    #[error(transparent)]
+    Number(#[from] crate::number::EncodingError),
+    #[error(transparent)]
+    Integer(#[from] crate::integer::EncodingError),
+    #[error("Encoding sub-schema failed: {0}")]
+    SubSchema(Box<Error>),
+}
+
+impl From<Error> for EncodingError {
+    fn from(e: Error) -> Self {
+        EncodingError::SubSchema(Box::new(e))
+    }
+}
+
+/// Errors decoding a string with an [ObjectSchema].
+#[derive(Debug, thiserror::Error)]
+pub enum DecodingError {
+    #[error("Reading encoded data failed: {0}")]
+    ReadFail(#[from] io::Error),
+    #[error(transparent)]
+    Integer(#[from] crate::integer::DecodingError),
+    #[error("Decoding sub-schema failed: {0}")]
+    SubSchema(Box<Error>),
+}
+
+impl DecodingError {
+    pub fn due_to_eof(&self) -> bool {
+        match &self {
+            DecodingError::ReadFail(e) => e.kind() == std::io::ErrorKind::UnexpectedEof,
+            DecodingError::Integer(e) => e.due_to_eof(),
+            DecodingError::SubSchema(e) => e.due_to_eof(),
+        }
+    }
+}
+
+impl From<Error> for DecodingError {
+    fn from(e: Error) -> Self {
+        DecodingError::SubSchema(Box::new(e))
+    }
+}
 
 /// A single property within an object schema.
 #[derive(Debug, Clone, Deserialize)]
@@ -19,6 +87,13 @@ struct RawProperty {
     /// Position of the property within the object. Determines the layout of
     /// binary serialization.
     position: usize,
+}
+
+/// A set of bitfields that all write to the same bytes.
+#[derive(Debug, Clone)]
+struct JoinedBitfield {
+    bytes: usize,
+    fields: HashMap<String, DataSchema>,
 }
 
 #[derive(Debug, Clone)]
@@ -55,8 +130,157 @@ pub struct ObjectSchema {
     context: Option<Value>,
 }
 
+impl JoinedBitfield {
+    pub fn join(bfs: HashMap<String, DataSchema>) -> Result<Self, ValidationError> {
+        if bfs.values().any(|ds| !ds.is_bitfield()) {
+            return Err(ValidationError::NoBitfields);
+        }
+
+        let raw_bfs = bfs
+            .iter()
+            .map(|(name, ds)| {
+                let bf = match ds.inner {
+                    InnerSchema::Number(NumberSchema::Integer {
+                        integer: IntegerSchema::Bitfield(bf),
+                        ..
+                    })
+                    | InnerSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
+                    _ => unreachable!("ensured at beginning"),
+                };
+                (name.as_str(), bf)
+            })
+            .collect::<HashMap<_, _>>();
+
+        let bytes = if let Some(bf) = raw_bfs.values().next() {
+            bf.bytes
+        } else {
+            // Empty map
+            return Err(ValidationError::NoBitfields);
+        };
+
+        if raw_bfs.values().any(|bf| bf.bytes != bytes) {
+            return Err(ValidationError::NotSameBytes);
+        }
+
+        raw_bfs.values().try_fold(0u64, |state, bf| {
+            let mask = bf.mask();
+            if state & mask != 0 {
+                Err(ValidationError::OverlappingBitfields)
+            } else {
+                Ok(state | mask)
+            }
+        })?;
+
+        Ok(Self { bytes, fields: bfs })
+    }
+    fn raw_bfs(&self) -> impl Iterator<Item = (&'_ str, &'_ Bitfield)> {
+        self.fields.iter().map(|(name, ds)| {
+            let bf = match &ds.inner {
+                InnerSchema::Number(NumberSchema::Integer {
+                    integer: IntegerSchema::Bitfield(bf),
+                    ..
+                })
+                | InnerSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
+                _ => unreachable!("ensured at constructor"),
+            };
+            (name.as_str(), bf)
+        })
+    }
+    /// Integer schema to encode the value of all bitfields.
+    fn integer(&self) -> PlainInteger {
+        self.raw_bfs()
+            .map(|(_, bf)| bf)
+            .next()
+            .expect("Constuctor guarantees that there is at least one bitfield")
+            .integer()
+    }
+}
+
+impl Encoder for JoinedBitfield {
+    type Error = EncodingError;
+
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
+    where
+        W: io::Write + WriteBytesExt,
+    {
+        let mut buffer = 0;
+        for (name, ds) in self.fields.iter() {
+            let value = match (value.get(name), ds.const_.as_ref()) {
+                (Some(val), Some(c)) if val == c => Ok(val),
+                (Some(val), Some(c)) => Err(EncodingError::InvalidConstValue {
+                    expected: c.to_string(),
+                    got: val.to_string(),
+                }),
+                (Some(val), None) => Ok(val),
+                (None, Some(c)) => Ok(c),
+                (None, None) => Err(EncodingError::MissingField(name.clone())),
+            }?;
+
+            let bf = match &ds.inner {
+                InnerSchema::Number(NumberSchema::Integer {
+                    integer: IntegerSchema::Bitfield(bf),
+                    ..
+                })
+                | InnerSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
+                _ => unreachable!("ensured at constructor"),
+            };
+            let value = if let InnerSchema::Number(ns) = &ds.inner {
+                let value =
+                    value
+                        .as_f64()
+                        .ok_or_else(|| crate::number::EncodingError::InvalidValue {
+                            value: value.to_string(),
+                        })?;
+                ns.to_binary_value(value) as _
+            } else {
+                value
+                    .as_u64()
+                    .ok_or_else(|| crate::integer::EncodingError::InvalidValue {
+                        value: value.to_string(),
+                    })?
+            };
+            bf.write(value, &mut buffer);
+        }
+
+        let int = self.integer();
+        int.encode(target, &buffer.into()).map_err(Into::into)
+    }
+}
+
+impl Decoder for JoinedBitfield {
+    type Error = DecodingError;
+
+    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
+    where
+        R: io::Read + ReadBytesExt,
+    {
+        let int = self.integer();
+        let int = int.decode(target)?.as_u64().expect("Is always u64");
+        let mut res = Value::default();
+        for (name, ds) in self.fields.iter() {
+            let bf = match &ds.inner {
+                InnerSchema::Number(NumberSchema::Integer {
+                    integer: IntegerSchema::Bitfield(bf),
+                    ..
+                })
+                | InnerSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
+                _ => unreachable!("ensured at constructor"),
+            };
+            let value = bf.read(int);
+            if let InnerSchema::Number(ns) = &ds.inner {
+                let value = ns.from_binary_value(value as _);
+                res[name] = value.into();
+            } else {
+                res[name] = value.into();
+            }
+        }
+
+        Ok(res)
+    }
+}
+
 impl Encoder for PropertySchema {
-    type Error = Error;
+    type Error = EncodingError;
 
     fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
     where
@@ -66,17 +290,17 @@ impl Encoder for PropertySchema {
             PropertySchema::Simple { name, schema } => {
                 let value = match (value.get(name), schema.const_.as_ref()) {
                     (Some(val), Some(c)) if val == c => Ok(val),
-                    (Some(val), Some(c)) => Err(Error::InvalidConstValue {
+                    (Some(val), Some(c)) => Err(EncodingError::InvalidConstValue {
                         expected: c.to_string(),
                         got: val.to_string(),
                     }),
                     (Some(val), None) => Ok(val),
                     (None, Some(c)) => Ok(c),
-                    (None, None) => Err(Error::MissingField(name.clone())),
+                    (None, None) => Err(EncodingError::MissingField(name.clone())),
                 }?;
-                schema.encode(target, value)
+                schema.encode(target, value).map_err(Into::into)
             }
-            PropertySchema::Merged(schema) => schema.encode(target, value),
+            PropertySchema::Merged(schema) => schema.encode(target, value).map_err(Into::into),
         }
     }
 }
@@ -86,7 +310,7 @@ impl PropertySchema {
     ///
     /// This is contrary to the normal [Decoder] trait where new values are
     /// created.
-    fn decode_into<R>(&self, target: &mut R, value: &mut Value) -> Result<()>
+    fn decode_into<R>(&self, target: &mut R, value: &mut Value) -> Result<(), DecodingError>
     where
         R: io::Read + ReadBytesExt,
     {
@@ -111,7 +335,7 @@ impl PropertySchema {
 }
 
 impl TryFrom<RawObject> for ObjectSchema {
-    type Error = Error;
+    type Error = ValidationError;
 
     fn try_from(raw: RawObject) -> Result<Self, Self::Error> {
         let mut ordered = HashMap::with_capacity(raw.properties.len());
@@ -134,7 +358,7 @@ impl TryFrom<RawObject> for ObjectSchema {
                         if schema.is_bitfield() {
                             Ok((name, schema))
                         } else {
-                            Err(Error::InvalidPosition(position))
+                            Err(ValidationError::InvalidPosition(position))
                         }
                     })
                     .collect();
@@ -166,7 +390,7 @@ impl<'de> Deserialize<'de> for ObjectSchema {
 }
 
 impl Encoder for ObjectSchema {
-    type Error = Error;
+    type Error = EncodingError;
 
     fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
     where
@@ -182,7 +406,7 @@ impl Encoder for ObjectSchema {
 }
 
 impl Decoder for ObjectSchema {
-    type Error = Error;
+    type Error = DecodingError;
 
     fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
     where

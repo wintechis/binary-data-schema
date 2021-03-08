@@ -102,6 +102,7 @@ pub mod integer;
 pub mod number;
 pub mod object;
 pub mod string;
+pub(crate) mod util;
 
 use std::{convert::TryFrom, io, string::FromUtf8Error};
 
@@ -147,7 +148,36 @@ pub enum Error {
     EncodeString(#[from] string::EncodingError),
     #[error("Decoding with string schema failed: {0}")]
     DecodeString(#[from] string::DecodingError),
-
+    #[error("Invalid boolean schema: {0}")]
+    ValidateBoolean(#[from] boolean::ValidationError),
+    #[error("Encoding with boolean schema failed: {0}")]
+    EncodeBoolean(#[from] boolean::EncodingError),
+    #[error("Decoding with boolean schema failed: {0}")]
+    DecodeBoolean(#[from] boolean::DecodingError),
+    #[error("Invalid number schema: {0}")]
+    ValidateNumber(#[from] number::ValidationError),
+    #[error("Encoding with number schema failed: {0}")]
+    EncodeNumber(#[from] number::EncodingError),
+    #[error("Decoding with number schema failed: {0}")]
+    DecodeNumber(#[from] number::DecodingError),
+    #[error("Invalid integer schema: {0}")]
+    ValidateInteger(#[from] integer::ValidationError),
+    #[error("Encoding with integer schema failed: {0}")]
+    EncodeInteger(#[from] integer::EncodingError),
+    #[error("Decoding with integer schema failed: {0}")]
+    DecodeInteger(#[from] integer::DecodingError),
+    #[error("Invalid object schema: {0}")]
+    ValidateObject(#[from] object::ValidationError),
+    #[error("Encoding with object schema failed: {0}")]
+    EncodeObject(#[from] object::EncodingError),
+    #[error("Decoding with object schema failed: {0}")]
+    DecodeObject(#[from] object::DecodingError),
+    #[error("Invalid array schema: {0}")]
+    ValidateArray(#[from] array::ValidationError),
+    #[error("Encoding with array schema failed: {0}")]
+    EncodeArray(#[from] array::EncodingError),
+    #[error("Decoding with array schema failed: {0}")]
+    DecodeArray(#[from] array::DecodingError),
 
     #[error("Invalid JSON: {0}")]
     Serialization(#[from] serde_json::Error),
@@ -164,31 +194,15 @@ pub enum Error {
         value: String,
         source: crate::string::EncodingError,
     },
-    #[error("Invalid length requested: Maximum allowed is {max} but {requested} where requested")]
-    MaxLength { max: usize, requested: usize },
-    #[error("The requsted length of {requested} is invalid for floating-point serialization. Either use 4 or 8 or use an integer encoding")]
-    InvalidFloatingLength { requested: usize },
-    #[error("The requested offset of {requested} bits is invalid as only {max} bits are available in the field")]
-    BitOffset { max: usize, requested: usize },
-    #[error("The requested fieldsize of {requested} bits is insufficient. It must be between 1 and {max} bits")]
-    InvalidBitWidth { max: usize, requested: usize },
-    #[error("Can not join no bitfields")]
-    NoBitfields,
-    #[error("Can not join bitfields as they are overlapping")]
-    OverlappingBitfields,
-    #[error("Can not join bitfields with varing number of bytes")]
-    NotSameBytes,
-    #[error("Invalid integer schema. Not a bitfield: {bf}; nor an integer: {int}")]
-    InvalidIntegerSchema { bf: Box<Error>, int: Box<Error> },
+
     #[error("The value '{value}' can not be encoded with a {type_} schema")]
     InvalidValue { value: String, type_: &'static str },
-    
+
     #[error("The default character has to be UTF8 encoded as one byte but '{0}' is encoded in {} bytes", .0.len_utf8())]
     InvalidDefaultChar(char),
     #[error("'{0}' is not a field in the schema")]
     NotAField(String),
-    #[error("The field '{0}' is not present in the value to encode")]
-    MissingField(String),
+
     #[error("A Json object was expected but got: {0}")]
     NotAnObject(String),
     #[error("The length of an array must be encoded in some way")]
@@ -209,8 +223,7 @@ pub enum Error {
     },
     #[error("There are contrary specifications for a fixed-length array")]
     InconsitentFixedLength,
-    #[error("The position {0} has been used multiple times in the object schema but only bitfields are allowed to share a position")]
-    InvalidPosition(usize),
+
     #[error("Can not decode value as the encoded lenght is {len} but capcacity is only {cap}")]
     EncodedValueExceedsCapacity { len: usize, cap: usize },
 
@@ -223,6 +236,20 @@ pub enum Error {
     },
     #[error("Expected the constant value {expected} but got {got}")]
     InvalidConstValue { expected: String, got: String },
+}
+
+impl Error {
+    pub fn due_to_eof(&self) -> bool {
+        match &self {
+            Error::DecodeString(e) => e.due_to_eof(),
+            Error::DecodeBoolean(e) => e.due_to_eof(),
+            Error::DecodeNumber(e) => e.due_to_eof(),
+            Error::DecodeInteger(e) => e.due_to_eof(),
+            Error::DecodeObject(e) => e.due_to_eof(),
+            Error::DecodeArray(e) => e.due_to_eof(),
+            _ => false,
+        }
+    }
 }
 
 /// Order of bytes within a field.
