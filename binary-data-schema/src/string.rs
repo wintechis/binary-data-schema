@@ -193,7 +193,7 @@ impl TryFrom<RawString> for StringSchema {
                     | LengthEncoding::Capacity {
                         capacity: number, ..
                     } => {
-                        if *number % 2 == 0 {
+                        if *number % 2 == 1 {
                             return Err(ValidationError::OddLimit(*number));
                         }
                         *number /= 2;
@@ -240,7 +240,7 @@ impl Encoder for StringSchema {
                     exceeds_length(value, int)?;
                     int.encode(target, &value.len().into())?;
                     target.write_all(value.as_bytes())?;
-                    value.len()
+                    value.len() + int.length()
                 }
                 LengthEncoding::EndPattern { pattern } => {
                     contains_end_sequencs(value, pattern)?;
@@ -268,55 +268,6 @@ impl Encoder for StringSchema {
             }
         };
         Ok(written)
-    }
-}
-
-impl Decoder for StringSchema {
-    type Error = DecodingError;
-
-    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
-    where
-        R: io::Read + ReadBytesExt,
-    {
-        let value = match self {
-            StringSchema::Utf8 { length } => {
-                let bytes = match length {
-                    LengthEncoding::Fixed(length) => read_with_length(target, *length)?,
-                    LengthEncoding::LengthEncoded(schema) => {
-                        let length = schema
-                            .decode(target)?
-                            .as_u64()
-                            .expect("length is always u64");
-                        read_with_length(target, length as _)?
-                    }
-                    LengthEncoding::EndPattern { pattern } => {
-                        read_with_pattern(target, pattern, usize::MAX)?
-                    }
-                    LengthEncoding::Capacity { padding, capacity } => {
-                        read_with_pattern(target, padding, *capacity)?
-                    }
-                    LengthEncoding::TillEnd => {
-                        let mut buf = Vec::new();
-                        target.read_to_end(&mut buf)?;
-                        buf
-                    }
-                };
-                String::from_utf8(bytes)?.into()
-            }
-            StringSchema::Binary { inner } => {
-                let array = inner.decode(target)?;
-                let bytes = array
-                    .as_array()
-                    .expect("Is an array schema")
-                    .iter()
-                    .map(|v| v.as_u64().expect("elements are u8") as _)
-                    .collect::<Vec<_>>();
-                let hex_string = hex::encode(bytes);
-                hex_string.into()
-            }
-        };
-
-        Ok(value)
     }
 }
 
@@ -376,6 +327,55 @@ fn fill_rest<W: io::Write>(
     Ok(to_fill)
 }
 
+impl Decoder for StringSchema {
+    type Error = DecodingError;
+
+    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
+    where
+        R: io::Read + ReadBytesExt,
+    {
+        let value = match self {
+            StringSchema::Utf8 { length } => {
+                let bytes = match length {
+                    LengthEncoding::Fixed(length) => read_with_length(target, *length)?,
+                    LengthEncoding::LengthEncoded(schema) => {
+                        let length = schema
+                            .decode(target)?
+                            .as_u64()
+                            .expect("length is always u64");
+                        read_with_length(target, length as _)?
+                    }
+                    LengthEncoding::EndPattern { pattern } => {
+                        read_with_pattern(target, pattern, usize::MAX)?
+                    }
+                    LengthEncoding::Capacity { padding, capacity } => {
+                        read_with_pattern(target, padding, *capacity)?
+                    }
+                    LengthEncoding::TillEnd => {
+                        let mut buf = Vec::new();
+                        target.read_to_end(&mut buf)?;
+                        buf
+                    }
+                };
+                String::from_utf8(bytes)?.into()
+            }
+            StringSchema::Binary { inner } => {
+                let array = inner.decode(target)?;
+                let bytes = array
+                    .as_array()
+                    .expect("Is an array schema")
+                    .iter()
+                    .map(|v| v.as_u64().expect("elements are u8") as _)
+                    .collect::<Vec<_>>();
+                let hex_string = hex::encode(bytes);
+                hex_string.into()
+            }
+        };
+
+        Ok(value)
+    }
+}
+
 fn read_with_length<R>(mut reader: R, length: usize) -> Result<Vec<u8>, DecodingError>
 where
     R: io::Read,
@@ -418,7 +418,7 @@ mod test {
             "maxLength": 4,
             "lengthEncoding": {
                 "type": "endpattern",
-                "sequence": "!"
+                "pattern": "!"
             }
         });
         let schema: StringSchema = from_value(schema)?;
@@ -435,20 +435,20 @@ mod test {
         let json: Value = value.clone().into();
         assert_eq!(4, schema.encode(&mut buffer, &json)?);
         assert_eq!(value.as_bytes(), buffer.as_slice());
-        let invalid = "Berta".to_string();
-        let invalid_json: Value = invalid.clone().into();
-        assert!(schema.encode(&mut buffer, &invalid_json).is_err());
 
+        let invalid = json!("Berta");
+        assert!(schema.encode(&mut buffer, &invalid).is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn incomplete_fixed() -> Result<()> {
         let schema = json!({
             "maxLength": 5,
             "lengthEncoding": { "type": "fixed" }
         });
-        let schema: StringSchema = from_value(schema)?;
-        let value = invalid;
-        let json = invalid_json;
-        buffer.clear();
-        assert_eq!(5, schema.encode(&mut buffer, &json)?);
-        assert_eq!(value.as_bytes(), buffer.as_slice());
+        assert!(from_value::<StringSchema>(schema).is_err());
 
         Ok(())
     }
@@ -481,9 +481,12 @@ mod test {
     }
 
     #[test]
-    fn default_pattern() -> Result<()> {
+    fn simple_pattern() -> Result<()> {
         let schema = json!({
-            "lengthEncoding": { "type": "endpattern" }
+            "lengthEncoding": {
+                "type": "endpattern",
+                "pattern": "\0"
+            }
         });
         let schema: StringSchema = from_value(schema)?;
         assert!(matches!(
@@ -504,15 +507,16 @@ mod test {
     }
 
     #[test]
-    fn default_pattern_binary() -> Result<()> {
+    fn simple_pattern_binary() -> Result<()> {
         println!("entry");
         let schema = json!({
-            "lengthEncoding": { "type": "endpattern" },
+            "lengthEncoding": {
+                "type": "endpattern",
+                "pattern": "00"
+            },
             "format": "binary",
         });
-        println!("parse");
         let schema: StringSchema = from_value(schema)?;
-        println!("ensure type");
         assert!(matches!(
             schema,
             StringSchema::Binary {
@@ -523,12 +527,10 @@ mod test {
             }
         ));
 
-        println!("encode");
         let mut buffer = vec![];
         let value = "6911dead".to_string();
         let json: Value = value.clone().into();
         assert_eq!(5, schema.encode(&mut buffer, &json)?);
-        println!("ensure result");
         let expected = [0x69, 0x11, 0xde, 0xad, 0x00];
         assert_eq!(&expected, buffer.as_slice());
 
@@ -557,11 +559,26 @@ mod test {
     }
 
     #[test]
-    fn pattern_utf8() -> Result<()> {
+    fn invalid_pattern() -> Result<()> {
+        // ß is UTF8 encoded as the two bytes `0xC3_9F` but patterns are only
+        // allowed to have one byte.
         let schema = json!({
             "lengthEncoding": {
                 "type": "endpattern",
-                "sequence": "ß"
+                "pattern": "ß"
+            }
+        });
+        assert!(from_value::<StringSchema>(schema).is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn other_pattern() -> Result<()> {
+        let schema = json!({
+            "lengthEncoding": {
+                "type": "endpattern",
+                "pattern": "!"
             }
         });
         let schema: StringSchema = from_value(schema)?;
@@ -575,31 +592,74 @@ mod test {
         let mut buffer = vec![];
         let value = "Hans".to_string();
         let json: Value = value.clone().into();
-        // ß is UTF8 encoded as the two bytes `0xC3_9F`
-        assert_eq!(6, schema.encode(&mut buffer, &json)?);
-        let expected = [b'H', b'a', b'n', b's', 0xC3, 0x9F];
+        assert_eq!(5, schema.encode(&mut buffer, &json)?);
+        let expected = [b'H', b'a', b'n', b's', b'!'];
         assert_eq!(&expected, buffer.as_slice());
 
         Ok(())
     }
 
     #[test]
-    fn pattern_and_capacity() -> Result<()> {
+    fn pattern_included() -> Result<()> {
         let schema = json!({
             "lengthEncoding": {
                 "type": "endpattern",
-                "sequence": "?"
+                "pattern": "a"
+            }
+        });
+        let schema: StringSchema = from_value(schema)?;
+        assert!(matches!(
+            schema,
+            StringSchema::Utf8 {
+                length: LengthEncoding::EndPattern { .. }
+            }
+        ));
+
+        let mut buffer = vec![];
+        let value = "Hans".to_string();
+        let json: Value = value.clone().into();
+        // Endpattern `a` is in `Hans` included
+        assert!(schema.encode(&mut buffer, &json).is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_padding() -> Result<()> {
+        let schema = json!({
+            "lengthEncoding": {
+                "type": "capacity",
+                "padding": "µ"
             },
-            "defaultChar": "µ"
+            "maxLength": 10
         });
         // Fails, default char must UTF8 encode as one byte.
         assert!(from_value::<StringSchema>(schema).is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn missing_capacity() -> Result<()> {
         let schema = json!({
             "lengthEncoding": {
-                "type": "endpattern",
-                "sequence": "?"
+                "type": "capacity",
+                "padding": "\0"
+            }
+        });
+        // Capacity encoding requires `"maxLength"`.
+        assert!(from_value::<StringSchema>(schema).is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn capacity() -> Result<()> {
+        let schema = json!({
+            "lengthEncoding": {
+                "type": "capacity",
+                "padding": "!"
             },
-            "defaultChar": "!",
             "maxLength": 10
         });
         let schema: StringSchema = from_value(schema)?;
@@ -613,12 +673,46 @@ mod test {
         let mut buffer = vec![];
         let value = "Hans".to_string();
         let json: Value = value.clone().into();
-        assert_eq!(11, schema.encode(&mut buffer, &json)?);
-        let expected: [u8; 11] = [
-            b'H', b'a', b'n', b's', b'?', b'!', b'!', b'!', b'!', b'!', b'!',
-        ];
-        //  ^ value                 ^ end ^ filler
+        assert_eq!(10, schema.encode(&mut buffer, &json)?);
+        let expected: [u8; 10] = [b'H', b'a', b'n', b's', b'!', b'!', b'!', b'!', b'!', b'!'];
+        //  ^ value                 ^ filler
         assert_eq!(&expected, buffer.as_slice());
+
+        Ok(())
+    }
+
+    #[test]
+    fn binary_capacity() -> Result<()> {
+        println!("entry");
+        let schema = json!({
+            "lengthEncoding": {
+                "type": "capacity",
+                "padding": "00"
+            },
+            "maxLength": 10,
+            "format": "binary"
+        });
+        let schema: StringSchema = from_value(schema)?;
+        assert!(matches!(
+            schema,
+            StringSchema::Binary {
+                inner: ArraySchema {
+                    length: LengthEncoding::Capacity { capacity: 5, .. },
+                    ..
+                }
+            }
+        ));
+
+        let mut buffer = vec![];
+        let value = "6911dead".to_string();
+        let json: Value = value.clone().into();
+        assert_eq!(5, schema.encode(&mut buffer, &json)?);
+        let expected = [0x69, 0x11, 0xde, 0xad, 0x00];
+        assert_eq!(&expected, buffer.as_slice());
+
+        let mut read = std::io::Cursor::new(buffer);
+        let decoded = schema.decode(&mut read)?;
+        assert_eq!(json, decoded);
 
         Ok(())
     }
