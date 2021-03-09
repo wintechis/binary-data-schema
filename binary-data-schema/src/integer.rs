@@ -141,19 +141,6 @@ impl Bitfield {
         (value & self.mask()) >> self.offset
     }
     /// Write the value to the described bitfield.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use binary_data_schema::Bitfield;
-    ///
-    /// let bf = Bitfield::new(2, 3, 7)?;
-    /// let mut buffer = 0;
-    /// bf.write(21, &mut buffer);
-    /// // 21 & 0b111 = 5;
-    /// assert_eq!(buffer, (5 << 7));
-    /// # Ok::<(), anyhow::Error>(())
-    /// ```
     pub fn write(&self, value: u64, target: &mut u64) {
         let value = (value << self.offset) & self.mask();
         *target |= value;

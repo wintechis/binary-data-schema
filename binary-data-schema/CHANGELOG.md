@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Split up error types into validation, encoding and decoding.
 - CLI tool is now separated from the crate.
+- `"minLength"` and `"maxLength"` are now related to the decoded JSON string.
 
 ### Features
 

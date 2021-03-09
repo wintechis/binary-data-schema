@@ -263,8 +263,7 @@ impl Encoder for StringSchema {
             },
             StringSchema::Binary { inner } => {
                 let value = hex::decode(value)?;
-                let written = inner.encode(target, &(value.into()))?;
-                written
+                inner.encode(target, &(value.into()))?
             }
         };
         Ok(written)
