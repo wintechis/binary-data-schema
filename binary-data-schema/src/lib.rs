@@ -8,12 +8,16 @@
 //! # Features
 //!
 //! The specific features for each schema are explained in their submodule:
+//!
 //! - [boolean schema](boolean)
 //! - [integer schema](integer)
 //! - [number schema](number)
 //! - [string schema](string)
 //! - [array schema](array)
 //! - [object schema](object)
+//!
+//! Each feature is explained with an example. The examples follow the same
+//! structure as the (commented) [`const` example](#example) below.
 //!
 //! BDS is by far not feature complete. If you do not find a feature described
 //! it is probably safe to assume that it is not yet implemented. If you
@@ -60,12 +64,16 @@
 //!     "required": ["is_on"]
 //! });
 //! let mut scope = json_schema::Scope::new();
+//! // Valid JSON schema
 //! let j_schema = scope.compile_and_return(schema.clone(), false)?;
+//! // Valid Binary Data schema
 //! let schema = from_value::<DataSchema>(schema)?;
 //!
 //! let value = json!({ "is_on": true });
+//! // 'value' is valid for the JSON schema
 //! assert!(j_schema.validate(&value).is_valid());
 //! let mut encoded = Vec::new();
+//! // 'value' is valud for the Binary Data schema
 //! schema.encode(&mut encoded, &value)?;
 //! # let expected = [0xfe, 1, 0xef];
 //! # assert_eq!(&expected, encoded.as_slice());
@@ -77,13 +85,15 @@
 //!     "is_on": true,
 //!     "end": "ef"
 //! });
+//! // The retrieved value is vavlid for the JSON schema
 //! assert!(j_schema.validate(&back).is_valid());
+//! // The retrieved value is as expected
 //! assert_eq!(back, expected);
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 //!
-//! - As you see fields with `const` are not required for encoding but included
-//!   when decoded.
+//! - Fields with `const` are not required for encoding but included when
+//!   decoded.
 //! - To keep BDS aligned with [JSON schema] it is recommended to add
 //!   [`"required"`] to object schemata.
 //!
@@ -271,8 +281,7 @@ struct RawDataSchema {
     const_: Option<Value>,
 }
 
-/// The inner data schema without special features like `"const"` or
-/// `"jsonld:context"`.
+/// The inner data schema without special features like `"const"`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum InnerSchema {

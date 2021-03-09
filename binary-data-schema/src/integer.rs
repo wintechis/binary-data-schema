@@ -12,7 +12,7 @@ const MAX_INTEGER_SIZE: usize = 8;
 const DEFAULT_LENGTH: usize = 4;
 const DEFAULT_SIGNED: bool = true;
 
-/// Errors validating an [IntergerSchema].
+/// Errors validating an [IntegerSchema].
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
     #[error("Invalid length requested: Maximum allowed is {max} but {requested} where requested")]
@@ -28,7 +28,7 @@ pub enum ValidationError {
     },
 }
 
-/// Errors encoding a string with an [IntergerSchema].
+/// Errors encoding a string with an [IntegerSchema].
 #[derive(Debug, thiserror::Error)]
 pub enum EncodingError {
     #[error("The value '{value}' can not be encoded with an integer schema")]
@@ -37,7 +37,7 @@ pub enum EncodingError {
     WriteFail(#[from] io::Error),
 }
 
-/// Errors decoding a string with an [IntergerSchema].
+/// Errors decoding a string with an [IntegerSchema].
 #[derive(Debug, thiserror::Error)]
 pub enum DecodingError {
     #[error("Reading encoded data failed: {0}")]
