@@ -329,8 +329,8 @@ mod test {
                 "type": "boolean"
             }
         });
-        let schema = from_value::<ArraySchema>(schema);
-        assert!(schema.is_err());
+        let schema = from_value::<ArraySchema>(schema)?;
+        assert!(matches!(schema, ArraySchema { length: LengthEncoding::TillEnd, .. }));
         Ok(())
     }
     #[test]
@@ -363,6 +363,7 @@ mod test {
     fn length() -> Result<()> {
         let schema = json!({
             "lengthEncoding": {
+                "type": "explicitlength",
                 "length": 1,
                 "signed": false
             },
