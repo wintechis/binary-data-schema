@@ -279,7 +279,7 @@ pub enum InnerSchema {
     Boolean(BooleanSchema),
     Integer(IntegerSchema),
     Number(NumberSchema),
-    String(StringSchema),
+    String(Box<StringSchema>),
     Array(Box<ArraySchema>),
     Object(ObjectSchema),
 }
@@ -438,7 +438,7 @@ impl From<NumberSchema> for InnerSchema {
 
 impl From<StringSchema> for InnerSchema {
     fn from(v: StringSchema) -> Self {
-        Self::String(v)
+        Self::String(Box::new(v))
     }
 }
 

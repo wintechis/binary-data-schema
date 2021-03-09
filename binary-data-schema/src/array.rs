@@ -64,6 +64,8 @@ pub enum DecodingError {
     ReadFail(#[from] io::Error),
     #[error("Decoding sub-schema failed: {0}")]
     SubSchema(Box<Error>),
+    #[error("Could not deencode length: {0}")]
+    DecodingLength(#[from] int::DecodingError),
 }
 
 impl From<Error> for DecodingError {
@@ -94,7 +96,7 @@ struct RawArray {
 /// Contrary to the JSON schema's array schema tuples are not supported.
 #[derive(Debug, Clone)]
 pub struct ArraySchema {
-    length: LengthEncoding<Value>,
+    pub(crate) length: LengthEncoding<Value>,
     items: DataSchema,
 }
 
@@ -258,7 +260,7 @@ impl Encoder for ArraySchema {
 }
 
 impl Decoder for ArraySchema {
-    type Error = Error;
+    type Error = DecodingError;
 
     fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
     where
@@ -277,12 +279,24 @@ impl Decoder for ArraySchema {
                     .map(|_| self.items.decode(target))
                     .collect::<Result<Vec<_>, _>>()?
             }
-            LengthEncoding::EndPattern { pattern }
-            | LengthEncoding::Capacity {
-                padding: pattern, ..
-            } => {
+            LengthEncoding::EndPattern { pattern } => {
                 let mut elements = Vec::new();
                 loop {
+                    let element = self.items.decode(target)?;
+                    if element != *pattern {
+                        elements.push(element);
+                    } else {
+                        break;
+                    }
+                }
+                elements
+            }
+            LengthEncoding::Capacity {
+                padding: pattern,
+                capacity,
+            } => {
+                let mut elements = Vec::new();
+                for _ in 0..*capacity {
                     let element = self.items.decode(target)?;
                     if element != *pattern {
                         elements.push(element);
@@ -330,7 +344,13 @@ mod test {
             }
         });
         let schema = from_value::<ArraySchema>(schema)?;
-        assert!(matches!(schema, ArraySchema { length: LengthEncoding::TillEnd, .. }));
+        assert!(matches!(
+            schema,
+            ArraySchema {
+                length: LengthEncoding::TillEnd,
+                ..
+            }
+        ));
         Ok(())
     }
     #[test]

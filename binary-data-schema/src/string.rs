@@ -2,7 +2,7 @@
 
 use std::{convert::TryFrom, io};
 
-use bstr::ByteVec as _;
+use bstr::{ByteSlice, ByteVec as _};
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use serde::{
     de::{Deserializer, Error as DeError},
@@ -10,7 +10,10 @@ use serde::{
 };
 use serde_json::Value;
 
-use crate::{Decoder, Encoder, IntegerSchema};
+use crate::{
+    util::{LengthEncoding, RawLengthEncoding},
+    ArraySchema, Decoder, Encoder, IntegerSchema,
+};
 
 /// Character `\0` is used as default end and padding.
 pub const DEFAULT_CHAR: &str = "00";
@@ -18,14 +21,18 @@ pub const DEFAULT_CHAR: &str = "00";
 /// Errors validating a [StringSchema].
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
-    #[error("The given end 'sequence' or 'padding' is invalid: {0}")]
-    NotHexPattern(EncodingError),
-    #[error("End 'sequence' and 'padding' are limited to one byte but '{pattern}' is longer")]
+    #[error("The given end 'pattern' or 'padding' is not of binary format: {0}")]
+    NotHexPattern(#[from] hex::FromHexError),
+    #[error("End 'pattern' and 'padding' are limited to one byte but '{pattern}' is longer")]
     InvalidPattern { pattern: String },
     #[error("A fixed length string schema requires both 'maxLength' and 'minLength' given and having the same value")]
     IncompleteFixedLength,
     #[error("Length encoding 'capacity' requires 'maxLength'")]
     MissingCapacity,
+    #[error("The provided pattern or padding '{pattern}' is not a string")]
+    NotAString { pattern: Value },
+    #[error("Requested a fixed length or a capacity of {0}: Binary format strings have always an even length as bytes are mapped to two characters")]
+    OddLimit(usize),
 }
 
 /// Errors encoding a string with a [StringSchema].
@@ -39,7 +46,8 @@ pub enum EncodingError {
     InvalidHexString(#[from] hex::FromHexError),
     #[error("Encoding the value length failed: {0}")]
     LengthSchema(#[from] crate::integer::EncodingError),
-
+    #[error("Encoding the binary data failed: {0}")]
+    BinaryEncoding(#[from] crate::array::EncodingError),
     #[error("Length of {len} bytes but only a fixed length of {fixed} is supported")]
     NotFixedLength { len: usize, fixed: usize },
     #[error("Contains the end sequence {0}")]
@@ -61,6 +69,8 @@ pub enum DecodingError {
     NonUtf8Bstr(#[from] bstr::FromUtf8Error),
     #[error("Decoding the value length failed: {0}")]
     LengthSchema(#[from] crate::integer::DecodingError),
+    #[error("Decoding the binary data failed: {0}")]
+    BinaryDecoding(#[from] crate::array::DecodingError),
     #[error("The encoded value '{read}' does not contain the endpattern '{pattern}'")]
     NoPattern { read: String, pattern: String },
 }
@@ -75,61 +85,12 @@ impl DecodingError {
     }
 }
 
-/// Length encoding like present in the JSON description.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-enum RawLengthEncoding {
-    /// Requires `"maxLength"`. All values are that long. If the to-encode-value
-    /// has a different size an error is raised.
-    /// An alternative way to specify a fixed length is setting `"minLength"`
-    /// and `"maxLength"` to the same value. This version has priority above all
-    /// other length encodings.
-    Fixed,
-    /// The length of a string is stored at the beginning of the field with the
-    /// given integer schema.
-    ExplicitLength(IntegerSchema),
-    /// The end of the string is marked by a certain sequence.
-    EndPattern {
-        /// The sequence marking the end of the string (default: [DEFAULT_CHAR]).
-        #[serde(default = "RawLengthEncoding::default_char")]
-        sequence: String,
-    },
-    /// A capacity of `"maxLength"` is reserved for the string. Unused place is
-    /// filled with `"padding"`.
-    Capacity {
-        /// The characters used to fill unused capacity (default: [DEFAULT_CHAR]).
-        #[serde(default = "RawLengthEncoding::default_char")]
-        padding: String,
-    },
-    /// The encoded string reaches to the end of the data. This is the default
-    /// encoding in order to be compatible to the `octet-stream` encoder of
-    /// `node-wot`.
-    TillEnd,
-}
-
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum Format {
     #[serde(skip)]
     Utf8,
     Binary,
-}
-
-/// The string schema to describe string values.
-#[derive(Debug, Clone)]
-enum LengthEncoding {
-    Fixed(usize),
-    LengthEncoded(IntegerSchema),
-    EndPattern {
-        encoded: u8,
-        decoded: String,
-    },
-    Capacity {
-        encoded: u8,
-        decoded: String,
-        capacity: usize,
-    },
-    TillEnd,
 }
 
 /// How is the length of variable sized data encoded.
@@ -145,59 +106,33 @@ struct RawString {
 
 /// The string schema to describe string values.
 #[derive(Debug, Clone)]
-pub struct StringSchema {
-    encoding: LengthEncoding,
-    format: Format,
-}
-
-impl RawLengthEncoding {
-    fn default_char() -> String {
-        DEFAULT_CHAR.to_owned()
-    }
-}
-
-impl Default for RawLengthEncoding {
-    fn default() -> Self {
-        RawLengthEncoding::TillEnd
-    }
+pub enum StringSchema {
+    Utf8 { length: LengthEncoding<String> },
+    Binary { inner: ArraySchema },
 }
 
 impl Format {
-    fn encode(&self, value: String) -> Result<Vec<u8>, EncodingError> {
+    fn validate_pattern(&self, pattern: &str) -> Result<(), ValidationError> {
         match self {
-            Format::Utf8 => Ok(value.into_bytes()),
-            Format::Binary if value == "\0" => Ok(vec![0]),
-            Format::Binary => hex::decode(value).map_err(Into::into),
-        }
-    }
-    fn decode(&self, value: Vec<u8>) -> Result<String, DecodingError> {
-        match self {
-            Format::Utf8 => String::from_utf8(value).map_err(Into::into),
-            Format::Binary => Ok(hex::encode(value)),
-        }
-    }
-    fn validate_pattern(&self, pattern: String) -> Result<u8, ValidationError> {
-        let encoded = self
-            .encode(pattern.clone())
-            .map_err(|e| ValidationError::NotHexPattern(e))?;
-        if encoded.len() == 1 {
-            Ok(encoded[0])
-        } else {
-            Err(ValidationError::InvalidPattern { pattern })
-        }
-    }
-    // /// State how much bytes are written for a given length string.
-    // fn bytes_written(&self, len: usize) -> usize {
-    //     match self {
-    //         Format::Utf8 => len,
-    //         Format::Binary => len / 2,
-    //     }
-    // }
-    /// State how much characters are written for a given number of bytes.
-    fn chars_written(&self, bytes: usize) -> usize {
-        match self {
-            Format::Utf8 => bytes,
-            Format::Binary => bytes * 2,
+            Format::Utf8 => {
+                if pattern.len() == 1 {
+                    Ok(())
+                } else {
+                    Err(ValidationError::InvalidPattern {
+                        pattern: pattern.to_owned(),
+                    })
+                }
+            }
+            Format::Binary => {
+                let encoded = hex::decode(pattern)?;
+                if encoded.len() == 1 {
+                    Ok(())
+                } else {
+                    Err(ValidationError::InvalidPattern {
+                        pattern: pattern.to_owned(),
+                    })
+                }
+            }
         }
     }
 }
@@ -208,114 +143,69 @@ impl Default for Format {
     }
 }
 
-impl LengthEncoding {
-    fn encoded_length(&self, value_len: usize) -> usize {
-        match self {
-            LengthEncoding::Fixed(_) => value_len,
-            LengthEncoding::LengthEncoded(int) => int.length() + value_len,
-            LengthEncoding::EndPattern { .. } => 1 + value_len,
-            LengthEncoding::Capacity { capacity, .. } => *capacity,
-            LengthEncoding::TillEnd => value_len,
-        }
-    }
-    fn encode<W>(&self, target: &mut W, value: Vec<u8>) -> Result<(), EncodingError>
-    where
-        W: io::Write + WriteBytesExt,
-    {
-        match self {
-            LengthEncoding::Fixed(len) => {
-                matches_fixed_len(value.len(), *len)?;
-                target.write_all(&value)?;
-            }
-            LengthEncoding::LengthEncoded(int) => {
-                exceeds_length(value.len(), int)?;
-                int.encode(target, &value.len().into())?;
-                target.write_all(&value)?;
-            }
-            LengthEncoding::EndPattern { encoded, decoded } => {
-                contains_end_sequencs(&value, *encoded, decoded)?;
-                target.write_all(&value)?;
-                target.write_all(&[*encoded])?;
-            }
-            LengthEncoding::Capacity {
-                encoded, capacity, ..
-            } => {
-                let len_value = value.len();
-                let capacity = *capacity;
-                exceeds_cap(len_value, capacity)?;
-                target.write_all(&value)?;
-                fill_rest(target, capacity, len_value, *encoded)?;
-            }
-            LengthEncoding::TillEnd => {
-                target.write_all(&value)?;
-            }
-        }
-
-        Ok(())
-    }
-    fn decode<R>(&self, target: &mut R) -> Result<Vec<u8>, DecodingError>
-    where
-        R: io::Read + ReadBytesExt,
-    {
-        let value = match self {
-            LengthEncoding::Fixed(length) => read_str_with_length(target, *length)?,
-            LengthEncoding::LengthEncoded(schema) => {
-                let length = schema
-                    .decode(target)?
-                    .as_u64()
-                    .expect("length is always u64");
-                read_str_with_length(target, length as _)?
-            }
-            LengthEncoding::EndPattern { encoded, decoded } => {
-                read_str_with_pattern(target, *encoded, usize::MAX, decoded)?
-            }
-            LengthEncoding::Capacity {
-                encoded,
-                capacity,
-                decoded,
-                ..
-            } => read_str_with_pattern(target, *encoded, *capacity, decoded)?,
-            LengthEncoding::TillEnd => {
-                let mut buf = Vec::new();
-                target.read_to_end(&mut buf)?;
-                buf
-            }
-        };
-
-        Ok(value)
-    }
-}
-
-impl TryFrom<RawString> for LengthEncoding {
+impl TryFrom<RawString> for StringSchema {
     type Error = ValidationError;
 
     fn try_from(raw: RawString) -> Result<Self, Self::Error> {
-        let fmt = raw.format.unwrap_or_default();
-        match (raw.min_length, raw.max_length) {
-            (Some(min), Some(max)) if min == max => return Ok(LengthEncoding::Fixed(max)),
-            _ => {}
-        }
-        match raw.length_encoding {
-            RawLengthEncoding::Fixed => Err(ValidationError::IncompleteFixedLength),
-            RawLengthEncoding::ExplicitLength(schema) => Ok(LengthEncoding::LengthEncoded(schema)),
-            RawLengthEncoding::Capacity { padding } => {
-                let encoded = fmt.validate_pattern(padding.clone())?;
-                let capacity = raw.max_length.ok_or(ValidationError::MissingCapacity)?;
-                Ok(LengthEncoding::Capacity {
-                    capacity,
-                    encoded,
-                    decoded: padding,
-                })
+        let format = raw.format.unwrap_or_default();
+        let length = match (raw.min_length, raw.max_length) {
+            (Some(min), Some(max)) if min == max => Ok(LengthEncoding::Fixed(max)),
+            _ => match raw.length_encoding {
+                RawLengthEncoding::Fixed => Err(ValidationError::IncompleteFixedLength),
+                RawLengthEncoding::ExplicitLength(schema) => {
+                    Ok(LengthEncoding::LengthEncoded(schema))
+                }
+                RawLengthEncoding::EndPattern { pattern } => {
+                    let pat_str = pattern
+                        .as_str()
+                        .ok_or_else(|| ValidationError::NotAString {
+                            pattern: pattern.clone(),
+                        })?;
+                    format.validate_pattern(pat_str)?;
+                    Ok(LengthEncoding::EndPattern { pattern })
+                }
+                RawLengthEncoding::Capacity { padding } => {
+                    let capacity = raw.max_length.ok_or(ValidationError::MissingCapacity)?;
+                    let pad_str = padding
+                        .as_str()
+                        .ok_or_else(|| ValidationError::NotAString {
+                            pattern: padding.clone(),
+                        })?;
+                    format.validate_pattern(pad_str)?;
+                    Ok(LengthEncoding::Capacity { capacity, padding })
+                }
+                RawLengthEncoding::TillEnd => Ok(LengthEncoding::TillEnd),
+            },
+        }?;
+        let schema = match format {
+            Format::Utf8 => Self::Utf8 {
+                length: length
+                    .map(|v| v.as_str().expect("ensured at length validation").to_owned()),
+            },
+            Format::Binary => {
+                let mut length = length.map(|v| {
+                    let string = v.as_str().expect("ensured at length validation");
+                    let byte = hex::decode(string).expect("ensured at length validation");
+                    byte[0].into()
+                });
+                match &mut length {
+                    LengthEncoding::Fixed(number)
+                    | LengthEncoding::Capacity {
+                        capacity: number, ..
+                    } => {
+                        if *number % 2 == 0 {
+                            return Err(ValidationError::OddLimit(*number));
+                        }
+                        *number /= 2;
+                    }
+                    _ => {}
+                };
+                Self::Binary {
+                    inner: ArraySchema::byte_array(length).expect("ensured at length validation"),
+                }
             }
-            RawLengthEncoding::EndPattern { sequence } => {
-                let encoded = fmt.validate_pattern(sequence.clone())?;
-                Ok(LengthEncoding::EndPattern {
-                    encoded,
-                    decoded: sequence,
-                })
-            }
-            RawLengthEncoding::TillEnd => Ok(LengthEncoding::TillEnd),
-        }
+        };
+        Ok(schema)
     }
 }
 
@@ -325,9 +215,7 @@ impl<'de> Deserialize<'de> for StringSchema {
         D: Deserializer<'de>,
     {
         let raw = RawString::deserialize(deserializer)?;
-        let format = raw.format.as_ref().copied().unwrap_or(Format::Utf8);
-        let encoding = LengthEncoding::try_from(raw).map_err(D::Error::custom)?;
-        Ok(StringSchema { encoding, format })
+        Self::try_from(raw).map_err(D::Error::custom)
     }
 }
 
@@ -341,11 +229,44 @@ impl Encoder for StringSchema {
         let value = value.as_str().ok_or_else(|| EncodingError::InvalidValue {
             value: value.to_string(),
         })?;
-        let value_encoded = self.format.encode(value.to_owned())?;
-        let len = value_encoded.len();
-        self.encoding.encode(target, value_encoded)?;
-
-        let written = self.format.chars_written(self.encoding.encoded_length(len));
+        let written = match &self {
+            StringSchema::Utf8 { length } => match length {
+                LengthEncoding::Fixed(len) => {
+                    matches_fixed_len(value, *len)?;
+                    target.write_all(value.as_bytes())?;
+                    *len
+                }
+                LengthEncoding::LengthEncoded(int) => {
+                    exceeds_length(value, int)?;
+                    int.encode(target, &value.len().into())?;
+                    target.write_all(value.as_bytes())?;
+                    value.len()
+                }
+                LengthEncoding::EndPattern { pattern } => {
+                    contains_end_sequencs(value, pattern)?;
+                    target.write_all(value.as_bytes())?;
+                    target.write_all(pattern.as_bytes())?;
+                    value.len() + pattern.len()
+                }
+                LengthEncoding::Capacity {
+                    padding, capacity, ..
+                } => {
+                    exceeds_cap(value, *capacity)?;
+                    target.write_all(value.as_bytes())?;
+                    fill_rest(target, *capacity, value.len(), padding)?;
+                    *capacity
+                }
+                LengthEncoding::TillEnd => {
+                    target.write_all(value.as_bytes())?;
+                    value.len()
+                }
+            },
+            StringSchema::Binary { inner } => {
+                let value = hex::decode(value)?;
+                let written = inner.encode(target, &(value.into()))?;
+                written
+            }
+        };
         Ok(written)
     }
 }
@@ -357,16 +278,52 @@ impl Decoder for StringSchema {
     where
         R: io::Read + ReadBytesExt,
     {
-        let encoded = self.encoding.decode(target)?;
-        let decoded = self.format.decode(encoded)?;
-        Ok(decoded.into())
+        let value = match self {
+            StringSchema::Utf8 { length } => {
+                let bytes = match length {
+                    LengthEncoding::Fixed(length) => read_with_length(target, *length)?,
+                    LengthEncoding::LengthEncoded(schema) => {
+                        let length = schema
+                            .decode(target)?
+                            .as_u64()
+                            .expect("length is always u64");
+                        read_with_length(target, length as _)?
+                    }
+                    LengthEncoding::EndPattern { pattern } => {
+                        read_with_pattern(target, pattern, usize::MAX)?
+                    }
+                    LengthEncoding::Capacity { padding, capacity } => {
+                        read_with_pattern(target, padding, *capacity)?
+                    }
+                    LengthEncoding::TillEnd => {
+                        let mut buf = Vec::new();
+                        target.read_to_end(&mut buf)?;
+                        buf
+                    }
+                };
+                String::from_utf8(bytes)?.into()
+            }
+            StringSchema::Binary { inner } => {
+                let array = inner.decode(target)?;
+                let bytes = array
+                    .as_array()
+                    .expect("Is an array schema")
+                    .iter()
+                    .map(|v| v.as_u64().expect("elements are u8") as _)
+                    .collect::<Vec<_>>();
+                let hex_string = hex::encode(bytes);
+                hex_string.into()
+            }
+        };
+
+        Ok(value)
     }
 }
 
-fn matches_fixed_len(value_len: usize, len: usize) -> Result<(), EncodingError> {
-    if value_len != len {
+fn matches_fixed_len(value: &str, len: usize) -> Result<(), EncodingError> {
+    if value.len() != len {
         Err(EncodingError::NotFixedLength {
-            len: value_len,
+            len: value.len(),
             fixed: len,
         })
     } else {
@@ -374,36 +331,30 @@ fn matches_fixed_len(value_len: usize, len: usize) -> Result<(), EncodingError> 
     }
 }
 
-fn contains_end_sequencs(
-    value: &[u8],
-    pattern: u8,
-    decoded_pattern: &str,
-) -> Result<(), EncodingError> {
-    if value.contains(&pattern) {
-        Err(EncodingError::ContainsEndSequence(
-            decoded_pattern.to_owned(),
-        ))
-    } else {
-        Ok(())
-    }
-}
-
-fn exceeds_cap(value_len: usize, cap: usize) -> Result<(), EncodingError> {
-    if value_len > cap {
-        Err(EncodingError::ExceedsCapacity {
-            len: value_len,
-            cap,
+fn exceeds_length(value: &str, schema: &IntegerSchema) -> Result<(), EncodingError> {
+    if value.len() > schema.max_value() {
+        Err(EncodingError::ExceedsLengthEncoding {
+            len: value.len(),
+            max: schema.max_value(),
         })
     } else {
         Ok(())
     }
 }
 
-fn exceeds_length(value_len: usize, schema: &IntegerSchema) -> Result<(), EncodingError> {
-    if value_len > schema.max_value() {
-        Err(EncodingError::ExceedsLengthEncoding {
-            len: value_len,
-            max: schema.max_value(),
+fn contains_end_sequencs(value: &str, pattern: &str) -> Result<(), EncodingError> {
+    if value.contains(&pattern) {
+        Err(EncodingError::ContainsEndSequence(pattern.to_owned()))
+    } else {
+        Ok(())
+    }
+}
+
+fn exceeds_cap(value: &str, cap: usize) -> Result<(), EncodingError> {
+    if value.len() > cap {
+        Err(EncodingError::ExceedsCapacity {
+            len: value.len(),
+            cap,
         })
     } else {
         Ok(())
@@ -414,18 +365,18 @@ fn fill_rest<W: io::Write>(
     target: W,
     cap: usize,
     filled: usize,
-    filler: u8,
+    filler: &str,
 ) -> Result<usize, EncodingError> {
     let mut target = target;
     let to_fill = cap - filled;
-    let filler = [filler];
     for _ in 0..to_fill {
-        target.write_all(&filler)?;
+        // At validation it is ensured that `filler.len() == 1`
+        target.write_all(filler.as_bytes())?;
     }
     Ok(to_fill)
 }
 
-fn read_str_with_length<R>(mut reader: R, length: usize) -> Result<Vec<u8>, DecodingError>
+fn read_with_length<R>(mut reader: R, length: usize) -> Result<Vec<u8>, DecodingError>
 where
     R: io::Read,
 {
@@ -434,36 +385,29 @@ where
     Ok(buf)
 }
 
-fn read_str_with_pattern<R>(
-    reader: R,
-    pattern: u8,
-    max: usize,
-    decoded_pattern: &str,
-) -> Result<Vec<u8>, DecodingError>
+fn read_with_pattern<R>(reader: R, pattern: &str, max: usize) -> Result<Vec<u8>, DecodingError>
 where
     R: io::Read,
 {
     let mut buf = Vec::new();
     for b in reader.bytes() {
         let b = b?;
-        if b == pattern {
-            return Ok(buf);
-        }
         buf.push(b);
-        if buf.len() == max {
+        if buf.len() == max || buf.ends_with_str(pattern) {
             return Ok(buf);
         }
     }
 
     Err(DecodingError::NoPattern {
         read: buf.into_string()?,
-        pattern: decoded_pattern.to_owned(),
+        pattern: pattern.to_owned(),
     })
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::array::ArraySchema;
     use anyhow::Result;
     use serde_json::{from_value, json};
 
@@ -479,7 +423,12 @@ mod test {
         });
         let schema: StringSchema = from_value(schema)?;
         // Length encoding gets ignored if 'min-' and 'maxLength' are present.
-        assert!(matches!(schema.encoding, LengthEncoding::Fixed(4)));
+        assert!(matches!(
+            schema,
+            StringSchema::Utf8 {
+                length: LengthEncoding::Fixed(4)
+            }
+        ));
 
         let mut buffer = vec![];
         let value = "Hans".to_string();
@@ -513,8 +462,12 @@ mod test {
             }
         });
         let schema: StringSchema = from_value(schema)?;
-        assert!(matches!(schema.encoding, LengthEncoding::LengthEncoded(_)));
-
+        assert!(matches!(
+            schema,
+            StringSchema::Utf8 {
+                length: LengthEncoding::LengthEncoded(_)
+            }
+        ));
         println!("schema: {:#?}", schema);
 
         let mut buffer = vec![];
@@ -533,7 +486,12 @@ mod test {
             "lengthEncoding": { "type": "endpattern" }
         });
         let schema: StringSchema = from_value(schema)?;
-        assert!(matches!(schema.encoding, LengthEncoding::EndPattern { .. }));
+        assert!(matches!(
+            schema,
+            StringSchema::Utf8 {
+                length: LengthEncoding::EndPattern { .. }
+            }
+        ));
 
         let mut buffer = vec![];
         let value = "Hans".to_string();
@@ -555,7 +513,15 @@ mod test {
         println!("parse");
         let schema: StringSchema = from_value(schema)?;
         println!("ensure type");
-        assert!(matches!(schema.encoding, LengthEncoding::EndPattern { .. }));
+        assert!(matches!(
+            schema,
+            StringSchema::Binary {
+                inner: ArraySchema {
+                    length: LengthEncoding::EndPattern { .. },
+                    ..
+                }
+            }
+        ));
 
         println!("encode");
         let mut buffer = vec![];
@@ -573,7 +539,12 @@ mod test {
     fn default() -> Result<()> {
         let schema = json!({});
         let schema: StringSchema = from_value(schema)?;
-        assert!(matches!(schema.encoding, LengthEncoding::TillEnd));
+        assert!(matches!(
+            schema,
+            StringSchema::Utf8 {
+                length: LengthEncoding::TillEnd
+            }
+        ));
 
         let mut buffer = vec![];
         let value = "Hans".to_string();
@@ -594,7 +565,12 @@ mod test {
             }
         });
         let schema: StringSchema = from_value(schema)?;
-        assert!(matches!(schema.encoding, LengthEncoding::EndPattern { .. }));
+        assert!(matches!(
+            schema,
+            StringSchema::Utf8 {
+                length: LengthEncoding::EndPattern { .. }
+            }
+        ));
 
         let mut buffer = vec![];
         let value = "Hans".to_string();
@@ -627,7 +603,12 @@ mod test {
             "maxLength": 10
         });
         let schema: StringSchema = from_value(schema)?;
-        assert!(matches!(schema.encoding, LengthEncoding::Capacity { .. }));
+        assert!(matches!(
+            schema,
+            StringSchema::Utf8 {
+                length: LengthEncoding::Capacity { .. }
+            }
+        ));
 
         let mut buffer = vec![];
         let value = "Hans".to_string();
