@@ -1,0 +1,161 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema> .
+@prefix sosa: <http://www.w3.org/ns/sosa/> .
+@prefix ssn: <http://www.w3.org/ns/ssn/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix p: <http://vocab.rapidthings.eu/ns/protocol.ttl#> .
+@prefix td: <https://www.w3.org/2019/wot/td#> .
+@prefix json: <https://www.w3.org/2019/wot/json-schema#> .
+@prefix : <#> .
+
+<> foaf:maker <https://mattes-white.inrupt.net/profile/card#me> ;
+ foaf:primaryTopic :Schema;
+ rdfs:seeAlso json:, <https://solid.ti.rw.fau.de/public/ns/bds/context.jsonld> ;
+ rdfs:comment "This vocabulary describes an extension of JSON schema in RDF for binary serialization." .
+
+# Schemata
+:Schema rdfs:subClassOf json:DataSchema;
+  rdfs:label "Binary Data Schema";
+  rdfs:comment "A schema that can be used to translate from JSON to bytes and back." .
+
+:BooleanSchema rdfs:subClassOf json:BooleanSchema ;
+  rdfs:label "Boolean Schema";
+  :validProperty :bitoffset;
+  rdfs:comment "Schema to encode boolean values." .
+
+:IntegerSchema rdfs:subClassOf json:IntegerSchema ;
+  rdfs:label "Integer Schema";
+  :validProperty :bitoffset, :byteorder, :signed, :bits;
+  rdfs:comment "Schema to encode integer values." .
+
+:Bitfield rdfs:subClassOf :IntegerSchema ;
+  rdfs:label "Bitfield";
+  rdfs:comment "A bitfield is an integer schema that targets only a number of bits instead of whole bytes." .
+
+:NumberSchema rdfs:subClassOf json:NumberSchema ;
+  rdfs:label "Number Schema";
+  :validProperty :bitoffset, :byteorder, :signed, :bits, :scale, :offset;
+  rdfs:comment "Schema to encode number values. With offset and scale these schemata can also encode as integers." .
+
+:StringSchema rdfs:subClassOf json:StringSchema ;
+  rdfs:label "String Schema";
+  :validProperty :lengthEncoding;
+  rdfs:comment "Schema to encode string values." .
+
+:ArraySchema rdfs:subClassOf json:ArraySchema ;
+  rdfs:label "Array Schema";
+  :validProperty :lengthEncoding;
+  rdfs:comment "Schema to encode an array of values." .
+
+:ObjectSchema rdfs:subClassOf json:ObjectSchema ;
+  rdfs:label "Object Schema";
+  rdfs:seeAlso :position ;
+  rdfs:comment "Schema to encode structured values." .
+
+
+# Schema properties
+:SchemaProperty rdfs:subClassOf rdf:Property ;
+  rdfs:label "Schema Property";
+  rdfs:comment "A property of a schema defining which values are valid for it." .
+
+:validProperty a rdf:Property ;
+  rdfs:label "valid property" ;
+  rdfs:range :SchemaProperty ;
+  rdfs:domain :Schema ;
+  rdfs:comment "States that a certain property is valid for a certain schema." .
+
+:bitoffset a :SchemaProperty ;
+  rdfs:label "bit offset" ;
+  rdfs:range xsd:integer ;
+  rdfs:label "Number of bits a bitfield is shifted from the LSB." .
+
+:bits a :SchemaProperty ;
+  rdfs:label "bits" ;
+  rdfs:range xsd:integer ;
+  rdfs:label "Number of bits of a bitfield." .
+
+:byteorder a :SchemaProperty ;
+  rdfs:label "byteorder" ;
+  rdfs:range :ByteOrder ;
+  rdfs:comment "The order the schema encodes bytes." .
+
+:signed a :SchemaProperty ;
+  rdfs:label "signed" ;
+  rdfs:range xsd:boolean ;
+  rdfs:comment "Whether the schema's values are signed or not." .
+
+:scale a :SchemaProperty ;
+  rdfs:label "scale" ;
+  rdfs:range xsd:double ;
+  rdfs:comment "The factor to scale the value before encoding." .
+
+:offset a :SchemaProperty ;
+  rdfs:label "offset" ;
+  rdfs:range xsd:double ;
+  rdfs:comment "Offset that is added to the value after decoding." .
+
+:lengthEncoding a :SchemaProperty ;
+  rdfs:label "uses length encoding" ;
+  rdfs:range :LengthEncoding ;
+  rdfs:comment "The way the length of an array or string is encoded." .
+
+:position a :SchemaProperty ;
+  rdfs:label "position" ;
+  rdfs:range xsd:integer ;
+  rdfs:comment "Determine the position of fields within an object schema." .
+
+
+# LengthEncoding
+:LengthEncoding a rdfs:Class ;
+  rdfs:label "Length Encoding" ;
+  rdfs:comment "Specification how the length of an array or string is provided." .
+
+:Fixed rdfs:subClassOf :LengthEncoding ;
+  rdfs:label "Fixed Length" ;
+  rdfs:comment "The length of this schema is fixed." .
+
+:ExplicitLength rdfs:subClassOf :LengthEncoding, :IntegerSchema ;
+  rdfs:label "Explicit Length" ;
+  rdfs:comment "The length of an encoded value is encoded at the beginning of the field with the schema an entity is." .
+
+:EndPattern rdfs:subClassOf :LengthEncoding ;
+  rdfs:label "End Pattern" ;
+  rdfs:comment "The end of an encoded value is marked by a pattern." .
+
+:pattern a rdf:Property ;
+  rdfs:label "has end pattern" ;
+  rdfs:domain :EndPattern ;
+  rdfs:comment "The pattern that ends an encoded value." .
+
+:Capacity rdfs:subClassOf :LengthEncoding ;
+  rdfs:label "Capacity" ;
+  rdfs:comment "For an encoded value a certain amount of space is reserved. Unused space is filled with padding" .
+
+:padding a rdf:Property ;
+  rdfs:label "uses padding" ;
+  rdfs:domain :Capacity ;
+  rdfs:comment "The paddung used to fill unused capacity." .
+
+:TillEnd rdfs:subClassOf :LengthEncoding ;
+  rdfs:label "Till End" ;
+  rdfs:comment "A value is encoded up to the end of the message" .
+
+
+# Byteorder
+:ByteOrder a rdfs:Class ;
+  rdfs:label "Byte Order" ;
+  rdfs:comment "The order bytes are encoded." .
+
+:BigEndian a :ByteOrder ;
+  rdfs:label "Big Endian" ;
+  rdfs:comment "MSB is first encoded." .
+
+:LittleEndian a :ByteOrder ;
+  rdfs:label "Little Endian" ;
+  rdfs:comment "LSB is first encoded." .
+
+:BinaryFormat
+  rdfs:label "Binary Format" ;
+  rdfs:seeAlso <https://swagger.io/docs/specification/data-models/data-types/#string> ;
+  rdfs:comment "Limits the values of a string schema to hex strings [0-9a-fA-F]*." .

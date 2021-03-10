@@ -1,0 +1,49 @@
+{
+    "@context": {
+        "xsd": "http://www.w3.org/2001/XMLSchema",
+        "bds": "https://solid.ti.rw.fau.de/public/ns/bds.ttl#",
+
+        "bitoffset": {
+            "@id": "bds:bitoffset",
+            "@value": "xsd:integer"
+        },
+        "byteorder": {
+            "@id": "bds:byteorder",
+            "@value": "@vocab"
+        },
+        "signed": {
+            "@id": "bds:signed",
+            "@value": "xsd:boolean"
+        },
+        "bits": {
+            "@id": "bds:bits",
+            "@value": "xsd:integer"
+        },
+        "scale": {
+            "@id": "bds:scale",
+            "@value": "xsd:double"
+        },
+        "offset": {
+            "@id": "bds:offset",
+            "@value": "xsd:double"
+        },
+        "fixed": "bds:Fixed",
+        "explicitlength": "bds:ExplicitLength",
+        "endpattern": "bds:EndPattern",
+        "capacity": "bds:Capacity",
+        "tillend": "bds:TillEnd",
+        "pattern": {
+            "@id": "bds:pattern",
+            "@value": "xsd:string"
+        },
+        "padding": {
+            "@id": "bds:padding",
+            "@value": "xsd:string"
+        },
+        "binary": "bds:BinaryFormat",
+        "position": {
+            "@id": "bds:position",
+            "@value": "xsd:integer"
+        }
+    }
+}
