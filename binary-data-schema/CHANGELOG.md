@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Features
 
 - string and array schema have now the same `"lengthEncoding"` options.
+- [Vocabulary and JSON-LD](../ld/README.md) context to allow interpretation as RDF.
 
 ### Bugfixes
 

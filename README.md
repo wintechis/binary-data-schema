@@ -7,35 +7,19 @@
 
 An expansion of [Web of Things Thing Description](https://www.w3.org/TR/wot-thing-description/)'s [Data Schema](https://www.w3.org/2019/wot/json-schema) to be able to serialize for content type `application/octet-stream`.
 
+A thorough documentation of the features is provided in the [Rust docs](https://docs.rs/binary-data-schema).
+
 ## CLI Tool
 
-To build the CLI tool you need to have the Rust toolchain installed and up to date. To ensure you have the latest version installed run:
+For quick testing a CLI tool is provided under [bds-cli/](bds-cli/README.md).
 
-```
-rustup update
-```
+## Linked Data Processing
 
-The binary is built with Rust's package manager `cargo`:
-
-```
-cargo build
-```
-
-The binary is stored in `binary-data-schema/target/debug/binary-data-schema` and has a simple CLI documented in the `--help` option.
-
-To check the program run:
-
-```
-./binary-data-schema -s binary-data-schema/examples/led-rgb/schema.json -i binary-data-schema/examples/led-rgb/valid-1.json encode
-```
-
-Alternatively you can use `cargo run -- {flags for binary-data-schema}` to run the tool.
-
-The result should be `7e000503ff10ff00ef`.
+A [vocabulary and a JSON-LD context](ld/README.md) are provided to allow the interpretation of Binary Data Schemata as RDF.
 
 ## License
 
-Licensed under [AGPL v3](LICENSE). For a commercial license contact the author, please.
+Licensed under [AGPL v3](LICENSE). For a commercial license contact the author.
 
 ## Contribution
 
