@@ -11,7 +11,8 @@ use serde_json::Value;
 
 use crate::{
     integer::{Bitfield, PlainInteger},
-    DataSchema, Decoder, Encoder, Error, InnerSchema, IntegerSchema, NumberSchema, Result,
+    BooleanSchema, DataSchema, Decoder, Encoder, Error, InnerSchema, IntegerSchema, NumberSchema,
+    Result,
 };
 
 /// Errors validating an [ObjectSchema].
@@ -42,6 +43,8 @@ pub enum EncodingError {
     Number(#[from] crate::number::EncodingError),
     #[error(transparent)]
     Integer(#[from] crate::integer::EncodingError),
+    #[error(transparent)]
+    Boolean(#[from] crate::boolean::EncodingError),
     #[error("Encoding sub-schema failed: {0}")]
     SubSchema(Box<Error>),
 }
@@ -139,24 +142,16 @@ impl JoinedBitfield {
         let raw_bfs = bfs
             .iter()
             .map(|(name, ds)| {
-                let bf = match ds.inner {
-                    InnerSchema::Number(NumberSchema::Integer {
-                        integer: IntegerSchema::Bitfield(bf),
-                        ..
-                    })
-                    | InnerSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
-                    _ => unreachable!("ensured at beginning"),
-                };
+                let bf = ds.inner.bitfield().expect("ensured at beginning");
                 (name.as_str(), bf)
             })
             .collect::<HashMap<_, _>>();
 
-        let bytes = if let Some(bf) = raw_bfs.values().next() {
-            bf.bytes
-        } else {
-            // Empty map
-            return Err(ValidationError::NoBitfields);
-        };
+        let bytes = raw_bfs
+            .values()
+            .next()
+            .ok_or(ValidationError::NoBitfields)?
+            .bytes;
 
         if raw_bfs.values().any(|bf| bf.bytes != bytes) {
             return Err(ValidationError::NotSameBytes);
@@ -175,14 +170,7 @@ impl JoinedBitfield {
     }
     fn raw_bfs(&self) -> impl Iterator<Item = (&'_ str, &'_ Bitfield)> {
         self.fields.iter().map(|(name, ds)| {
-            let bf = match &ds.inner {
-                InnerSchema::Number(NumberSchema::Integer {
-                    integer: IntegerSchema::Bitfield(bf),
-                    ..
-                })
-                | InnerSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
-                _ => unreachable!("ensured at constructor"),
-            };
+            let bf = ds.inner.bitfield().expect("ensured at constructor");
             (name.as_str(), bf)
         })
     }
@@ -216,28 +204,48 @@ impl Encoder for JoinedBitfield {
                 (None, None) => Err(EncodingError::MissingField(name.clone())),
             }?;
 
-            let bf = match &ds.inner {
-                InnerSchema::Number(NumberSchema::Integer {
-                    integer: IntegerSchema::Bitfield(bf),
-                    ..
-                })
-                | InnerSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
-                _ => unreachable!("ensured at constructor"),
-            };
-            let value = if let InnerSchema::Number(ns) = &ds.inner {
-                let value =
-                    value
-                        .as_f64()
-                        .ok_or_else(|| crate::number::EncodingError::InvalidValue {
+            let (bf, value) = match &ds.inner {
+                InnerSchema::Number(
+                    ns
+                    @
+                    NumberSchema::Integer {
+                        integer: IntegerSchema::Bitfield(_),
+                        ..
+                    },
+                ) => {
+                    let value = value.as_f64().ok_or_else(|| {
+                        crate::number::EncodingError::InvalidValue {
                             value: value.to_string(),
-                        })?;
-                ns.to_binary_value(value) as _
-            } else {
-                value
-                    .as_u64()
-                    .ok_or_else(|| crate::integer::EncodingError::InvalidValue {
-                        value: value.to_string(),
-                    })?
+                        }
+                    })?;
+                    let value = ns.to_binary_value(value) as _;
+                    if let NumberSchema::Integer {
+                        integer: IntegerSchema::Bitfield(bf),
+                        ..
+                    } = ns
+                    {
+                        (bf, value)
+                    } else {
+                        unreachable!("ensured by match")
+                    }
+                }
+                InnerSchema::Integer(IntegerSchema::Bitfield(bf)) => {
+                    let value = value.as_u64().ok_or_else(|| {
+                        crate::integer::EncodingError::InvalidValue {
+                            value: value.to_string(),
+                        }
+                    })?;
+                    (bf, value)
+                }
+                InnerSchema::Boolean(BooleanSchema { bf }) => {
+                    let value = value.as_bool().ok_or_else(|| {
+                        crate::boolean::EncodingError::InvalidValue {
+                            value: value.to_string(),
+                        }
+                    })? as _;
+                    (bf, value)
+                }
+                _ => unreachable!("ensured at constructor"),
             };
             bf.write(value, &mut buffer);
         }
@@ -258,14 +266,7 @@ impl Decoder for JoinedBitfield {
         let int = int.decode(target)?.as_u64().expect("Is always u64");
         let mut res = Value::default();
         for (name, ds) in self.fields.iter() {
-            let bf = match &ds.inner {
-                InnerSchema::Number(NumberSchema::Integer {
-                    integer: IntegerSchema::Bitfield(bf),
-                    ..
-                })
-                | InnerSchema::Integer(IntegerSchema::Bitfield(bf)) => bf,
-                _ => unreachable!("ensured at constructor"),
-            };
+            let bf = ds.inner.bitfield().expect("ensured at consturctor");
             let value = bf.read(int);
             if let InnerSchema::Number(ns) = &ds.inner {
                 let value = ns.from_binary_value(value as _);
@@ -663,7 +664,62 @@ mod test {
 
         Ok(())
     }
+    #[test]
+    fn merge_different_bitfields() -> Result<()> {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "num": {
+                    "type": "number",
+                    "position": 10,
+                    "scale": 0.1,
+                    "length": 1,
+                    "bits": 4,
+                    "bitoffset": 4,
+                },
+                "int": {
+                    "type": "integer",
+                    "position": 10,
+                    "length": 1,
+                    "bits": 3,
+                    "bitoffset": 1,
+                },
+                "bool": {
+                    "type": "boolean",
+                    "position": 10,
+                }
+            }
+        });
+        let schema = from_value::<DataSchema>(schema)?;
+        println!("schema:\n{:#?}", schema);
+        assert!(matches!(
+            schema,
+            DataSchema {
+                inner: InnerSchema::Object(_),
+                ..
+            }
+        ));
 
+        let value = json!({
+            "num": 3.0,
+            "int": 5,
+            "bool": false
+        });
+        let mut buffer = Vec::new();
+        assert_eq!(1, schema.encode(&mut buffer, &value)?);
+        let num = 30 << 4;
+        let int = 5 << 1;
+        let bool_ = 0 << 0;
+        let expected: [u8; 1] = [num | int | bool_];
+        assert_eq!(&expected, buffer.as_slice());
+        let mut cursor = std::io::Cursor::new(buffer);
+
+        let _returned = schema.decode(&mut cursor)?;
+        // returned is rpughly the same but due to loss of precision due to floating point operations value is not exact.
+        //assert_eq!(value, returned);
+
+        Ok(())
+    }
     #[test]
     fn jsonld_context() -> Result<()> {
         let schema = json!({

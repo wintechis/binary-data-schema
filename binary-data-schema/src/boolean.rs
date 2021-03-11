@@ -60,7 +60,7 @@ struct RawBoolean {
 /// Boolean schemata always describe a bitfield with a width of 1 bit.
 #[derive(Debug, Clone)]
 pub struct BooleanSchema {
-    bf: Bitfield,
+    pub(crate) bf: Bitfield,
 }
 
 impl BooleanSchema {

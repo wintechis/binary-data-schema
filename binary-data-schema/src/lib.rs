@@ -117,6 +117,7 @@ pub(crate) mod util;
 use std::{convert::TryFrom, io, string::FromUtf8Error};
 
 use byteorder::{ReadBytesExt, WriteBytesExt};
+use integer::Bitfield;
 use serde::{de::Error as DeError, Deserialize, Deserializer};
 use serde_json::Value;
 
@@ -318,13 +319,19 @@ impl InnerSchema {
         }
     }
     fn is_bitfield(&self) -> bool {
-        matches!(
-            self,
+        self.bitfield().is_some()
+    }
+    /// Return the inner bitfield if there is some.
+    fn bitfield(&self) -> Option<&Bitfield> {
+        match &self {
             Self::Number(NumberSchema::Integer {
-                integer: IntegerSchema::Bitfield(_),
+                integer: IntegerSchema::Bitfield(bf),
                 ..
-            }) | Self::Integer(IntegerSchema::Bitfield(_))
-        )
+            })
+            | Self::Integer(IntegerSchema::Bitfield(bf))
+            | Self::Boolean(BooleanSchema { bf }) => Some(bf),
+            _ => None,
+        }
     }
 }
 
