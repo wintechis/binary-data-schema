@@ -1,4 +1,10 @@
 //! Implementation of the integer schema
+//!
+//! # Parameters
+//!
+//! ## Validation
+//!
+//! # Features
 
 use std::{convert::TryFrom, io};
 

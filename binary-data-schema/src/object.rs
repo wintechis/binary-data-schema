@@ -1,4 +1,8 @@
 //! Implementation of the string schema
+//!
+//! # Features
+//!
+//! ## Bitfields
 
 use std::{collections::HashMap, convert::TryFrom, io};
 

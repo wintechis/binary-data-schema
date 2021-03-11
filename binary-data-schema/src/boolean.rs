@@ -1,6 +1,63 @@
-//! Implementation of the Boolean schema
+//! Implementation of the boolean schema.
 //!
-//! Boolean schema 
+//! By default [BooleanSchema] encode the Boolean values `true` and `false` to
+//! one byte. However, internally it only targets a single bit. This allows BDS
+//! to recognize [BooleanSchema] as [bitfields].
+//!
+//! # Parameters
+//!
+//! | Key           | Type   | Default | Comment |
+//! | ------------- | ------:| -------:| ------- |
+//! | `"bitoffset"` | `uint` |       0 | Number of bits the [bitfield] is shifted |
+//! | `"length"`    | `uint` |       1 | Number of bytes the field encodes |
+//!
+//! _Note:_ If the [BooleanSchema] is part of a merged [bitfield] its length
+//! must match the other bitfields.
+//!
+//! ## Validation
+//!
+//! Like for every other [bitfield] the `"bitoffset"` must not exceed the field's
+//! length, i.e.:
+//!
+//! ```text
+//! "bitoffset" + 1 <= "length" * 8
+//! ```
+//!
+//! _Note:_ The width ([`"bits"`]) of a [BooleanSchema] is always 1.
+//!
+//! # Example
+//!
+//! All parameters of [BooleanSchema] has default values. Accordingly, an empty
+//! schema is valid.
+//!
+//! ```
+//! # use binary_data_schema::*;
+//! # use valico::json_schema;
+//! # use serde_json::{json, from_value};
+//! let schema = json!({ "type": "boolean" });
+//!
+//! let mut scope = json_schema::Scope::new();
+//! let j_schema = scope.compile_and_return(schema.clone(), false)?;
+//! let schema = from_value::<DataSchema>(schema)?;
+//!
+//! let value = json!(true);
+//! assert!(j_schema.validate(&value).is_valid());
+//! let mut encoded = Vec::new();
+//! schema.encode(&mut encoded, &value)?;
+//! # let expected = [1];
+//! # assert_eq!(&expected, encoded.as_slice());
+//!
+//! let mut encoded = std::io::Cursor::new(encoded);
+//! let back = schema.decode(&mut encoded)?;
+//! assert!(j_schema.validate(&back).is_valid());
+//! assert_eq!(back, value);
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+//!
+//! [bitfields]: ../object/index.html#bitfields
+//! [bitfield]: ../object/index.html#bitfields
+//! [`"bits"`]: ../integer/index.html#parameters
+
 use std::{convert::TryFrom, io};
 
 use byteorder::{ReadBytesExt, WriteBytesExt};
