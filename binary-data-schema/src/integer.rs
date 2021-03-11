@@ -81,7 +81,7 @@ pub struct Bitfield {
     pub(crate) offset: usize,
 }
 
-/// An integer schema. May refer to a bitfield.
+/// An integer schema. May refer to a bitfield (further information on [the module's documentation](index.html)).
 #[derive(Debug, Clone)]
 pub enum IntegerSchema {
     Integer(PlainInteger),

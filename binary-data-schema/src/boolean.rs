@@ -1,5 +1,6 @@
 //! Implementation of the Boolean schema
-
+//!
+//! Boolean schema 
 use std::{convert::TryFrom, io};
 
 use byteorder::{ReadBytesExt, WriteBytesExt};
@@ -55,7 +56,7 @@ struct RawBoolean {
     offset: usize,
 }
 
-/// The Boolean schema describes a Boolean value.
+/// The Boolean schema describes a Boolean value (further information on [the module's documentation](index.html)).
 ///
 /// Boolean schemata always describe a bitfield with a width of 1 bit.
 #[derive(Debug, Clone)]

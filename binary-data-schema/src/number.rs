@@ -56,7 +56,7 @@ struct RawNumber {
     offset: Option<f64>,
 }
 
-/// The number schema describes a numeric value.
+/// The number schema describes a numeric value (further information on [the module's documentation](index.html)).
 #[derive(Debug, Clone)]
 pub enum NumberSchema {
     Integer {

@@ -104,7 +104,7 @@ struct RawString {
     format: Option<Format>,
 }
 
-/// The string schema to describe string values.
+/// The string schema to describe string values (further information on [the module's documentation](index.html)).
 #[derive(Debug, Clone)]
 pub enum StringSchema {
     Utf8 { length: LengthEncoding<String> },

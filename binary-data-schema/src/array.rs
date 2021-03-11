@@ -91,7 +91,7 @@ struct RawArray {
     items: DataSchema,
 }
 
-/// The array schema to describe arrays of homogeneous elements.
+/// The array schema to describe arrays of homogeneous elements (further information on [the module's documentation](index.html)).
 ///
 /// Contrary to the JSON schema's array schema tuples are not supported.
 #[derive(Debug, Clone)]

@@ -118,7 +118,7 @@ struct RawObject {
     context: Option<Value>,
 }
 
-/// The object schema to describe structured data.
+/// The object schema to describe structured data (further information on [the module's documentation](index.html)).
 ///
 /// The position of a property within an object schema defines the order in
 /// which the properties are written to bytes.
