@@ -1,6 +1,7 @@
 {
     "@context": {
         "xsd": "http://www.w3.org/2001/XMLSchema",
+        "jsonld": "http://www.w3.org/ns/json-ld#",
         "bds": "https://solid.ti.rw.fau.de/public/ns/bds.ttl#",
 
         "bitoffset": {
