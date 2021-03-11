@@ -1,10 +1,28 @@
 //! Implementation of the integer schema
 //!
+//! The integer schema allows en- and decoding of integers.
+//! BDS supports integers up to a length of 8 bytes.
+//! In order to support more dense encoding, BDS's integer schema allow for addressing [bitfields].
+//! This means that an encoded integer does not have to align with bytes.
+//!
 //! # Parameters
+//!
+//! | Key           | Type     | Default  | Comment |
+//! | ------------- | --------:| --------:| ------- |
+//! | `"byteorder"` | "littleendian" or "bigendian" | "bigendian" | The order in which the bytes are encoded. |
+//! | `"length"`    | `uint`   |        4 | Number of bytes of the encoded integer |
+//! | `"signed"`    | `bool`   |     true | Whether the integer is signed or not |
+//! | `"bits"`      | `uint`   | optional | Number of bits the [bitfield] covers |
+//! | `"bitoffset"` | `uint`   | optional | Number of bits the [bitfield] is shifted |
 //!
 //! ## Validation
 //!
 //! # Features
+//!
+//! ## Endianness
+//!
+//! [bitfields]: ../object/index.html#bitfields
+//! [bitfield]: ../object/index.html#bitfields
 
 use std::{convert::TryFrom, io};
 
@@ -23,8 +41,12 @@ const DEFAULT_SIGNED: bool = true;
 pub enum ValidationError {
     #[error("Invalid length requested: Maximum allowed is {max} but {requested} where requested")]
     MaxLength { max: usize, requested: usize },
-    #[error("The requested offset of {requested} bits is invalid as only {max} bits are available in the field")]
-    BitOffset { max: usize, requested: usize },
+    #[error("A bitfield with offset {offset} and a width of {width} bits does not fit into a {bytes} bytes field")]
+    BitOffset {
+        bytes: usize,
+        offset: usize,
+        width: usize,
+    },
     #[error("The requested field size of {requested} bits is insufficient. It must be between 1 and {max} bits")]
     InvalidBitWidth { max: usize, requested: usize },
     #[error("Invalid integer schema. Not a bitfield: {bf}; nor an integer: {int}")]
@@ -32,6 +54,10 @@ pub enum ValidationError {
         bf: Box<ValidationError>,
         int: Box<ValidationError>,
     },
+    #[error(
+        "Tried to build a bitfield from a description that has neither 'bits' nor 'bitoffset'"
+    )]
+    NotABitfield,
 }
 
 /// Errors encoding a string with an [IntegerSchema].
@@ -65,10 +91,9 @@ pub(crate) struct RawIntegerSchema {
     pub(crate) length: usize,
     #[serde(default = "IntegerSchema::default_signed")]
     pub(crate) signed: bool,
-    #[serde(default)]
-    pub(crate) bits: usize,
-    #[serde(default, rename = "bitoffset")]
-    pub(crate) bit_offset: usize,
+    pub(crate) bits: Option<usize>,
+    #[serde(rename = "bitoffset")]
+    pub(crate) bit_offset: Option<usize>,
 }
 
 /// A simple integer schema.
@@ -83,7 +108,7 @@ pub struct PlainInteger {
 #[derive(Debug, Clone, Copy)]
 pub struct Bitfield {
     pub(crate) bytes: usize,
-    pub(crate) bits: usize,
+    pub(crate) width: usize,
     pub(crate) offset: usize,
 }
 
@@ -98,7 +123,7 @@ impl Default for Bitfield {
     fn default() -> Self {
         Self {
             bytes: 1,
-            bits: 1,
+            width: 1,
             offset: 0,
         }
     }
@@ -106,41 +131,42 @@ impl Default for Bitfield {
 
 impl Bitfield {
     /// Create a new bitfield.
-    pub fn new(bytes: usize, bits: usize, offset: usize) -> Result<Self, ValidationError> {
+    pub fn new(bytes: usize, width: usize, offset: usize) -> Result<Self, ValidationError> {
         let max_bits = bytes * 8;
-        if bytes > 8 {
+        if bytes > MAX_INTEGER_SIZE {
             Err(ValidationError::MaxLength {
-                max: 8,
+                max: MAX_INTEGER_SIZE,
                 requested: bytes,
             })
-        } else if bits + offset > max_bits {
+        } else if width + offset > max_bits {
             Err(ValidationError::BitOffset {
-                max: max_bits,
-                requested: bits + offset,
+                bytes,
+                width,
+                offset,
             })
-        } else if bits == 0 || bits > max_bits {
+        } else if width == 0 || width > max_bits {
             Err(ValidationError::InvalidBitWidth {
                 max: max_bits,
-                requested: bits,
+                requested: width,
             })
         } else {
             Ok(Self {
                 bytes,
-                bits,
+                width,
                 offset,
             })
         }
     }
     /// Width of the bitfield in bits.
     pub fn bits(&self) -> usize {
-        self.bits
+        self.width
     }
     pub fn bytes(&self) -> usize {
         self.bytes
     }
     /// Mask to select the bits covered by the bitfield.
     pub fn mask(&self) -> u64 {
-        ((1 << self.bits) - 1) << self.offset
+        ((1 << self.width) - 1) << self.offset
     }
     /// Read the value of the bitfield from bytes.
     pub fn read(&self, value: u64) -> u64 {
@@ -158,59 +184,12 @@ impl Bitfield {
     }
 }
 
-impl Encoder for Bitfield {
-    type Error = EncodingError;
-
-    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
-    where
-        W: io::Write + WriteBytesExt,
-    {
-        let value = value.as_u64().ok_or_else(|| EncodingError::InvalidValue {
-            value: value.to_string(),
-        })?;
-        let mut buffer = 0;
-        self.write(value, &mut buffer);
-        let int = self.integer();
-        int.encode(target, &buffer.into())
-    }
-}
-
-impl Decoder for Bitfield {
-    type Error = DecodingError;
-
-    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
-    where
-        R: io::Read + ReadBytesExt,
-    {
-        let int = self.integer();
-        let int = int.decode(target)?.as_u64().expect("Is always u64.");
-        Ok(self.read(int).into())
-    }
-}
-
-impl TryFrom<RawIntegerSchema> for Bitfield {
-    type Error = ValidationError;
-
-    /// Try to build a bitfield schema from a raw definition.
-    ///
-    /// # Defaults
-    ///
-    /// If only `"bitoffset"` is present a bit width of 1 is assumed.
-    ///
-    /// # Errors
-    ///
-    /// Fails if `"bits"` and `"bitoffset"` are not present. If you want
-    /// to default in such case use [Bitfield::from_raw].
-    ///
-    /// Furthermore, errors are raised when:
-    /// - The `"length"` exceeds the maximum integer schema length, i.e. 8.
-    /// - If `"bits"` and `"bitoffset"` together are bigger than the bitfield.
-    /// - If `"bits"` is 0.
-    fn try_from(raw: RawIntegerSchema) -> Result<Self, Self::Error> {
-        if raw.bit_offset != 0 && raw.bits == 0 {
-            Bitfield::new(raw.length, 1, raw.bit_offset)
-        } else {
-            Bitfield::new(raw.length, raw.bits, raw.bit_offset)
+impl Default for PlainInteger {
+    fn default() -> Self {
+        PlainInteger {
+            length: IntegerSchema::default_length(),
+            signed: IntegerSchema::default_signed(),
+            byteorder: Default::default(),
         }
     }
 }
@@ -253,61 +232,6 @@ impl PlainInteger {
     }
 }
 
-impl Default for PlainInteger {
-    fn default() -> Self {
-        PlainInteger {
-            length: IntegerSchema::default_length(),
-            signed: IntegerSchema::default_signed(),
-            byteorder: Default::default(),
-        }
-    }
-}
-
-impl Encoder for PlainInteger {
-    type Error = EncodingError;
-
-    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
-    where
-        W: io::Write + WriteBytesExt,
-    {
-        let value = value.as_i64().ok_or_else(|| EncodingError::InvalidValue {
-            value: value.to_string(),
-        })?;
-        match (self.byteorder, self.signed) {
-            (ByteOrder::BigEndian, true) => target.write_int::<BE>(value, self.length)?,
-            (ByteOrder::BigEndian, false) => target.write_uint::<BE>(value as _, self.length)?,
-            (ByteOrder::LittleEndian, true) => target.write_int::<LE>(value, self.length)?,
-            (ByteOrder::LittleEndian, false) => target.write_uint::<LE>(value as _, self.length)?,
-        };
-
-        Ok(self.length)
-    }
-}
-
-impl Decoder for PlainInteger {
-    type Error = DecodingError;
-
-    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
-    where
-        R: io::Read + ReadBytesExt,
-    {
-        Ok(match (self.byteorder, self.signed) {
-            (ByteOrder::BigEndian, true) => target.read_int::<BE>(self.length)?.into(),
-            (ByteOrder::BigEndian, false) => target.read_uint::<BE>(self.length)?.into(),
-            (ByteOrder::LittleEndian, true) => target.read_int::<LE>(self.length)?.into(),
-            (ByteOrder::LittleEndian, false) => target.read_uint::<LE>(self.length)?.into(),
-        })
-    }
-}
-
-impl TryFrom<RawIntegerSchema> for PlainInteger {
-    type Error = ValidationError;
-
-    fn try_from(raw: RawIntegerSchema) -> Result<Self, Self::Error> {
-        Self::new(raw.byteorder, raw.length, raw.signed)
-    }
-}
-
 impl IntegerSchema {
     pub fn default_length() -> usize {
         DEFAULT_LENGTH
@@ -344,7 +268,7 @@ impl IntegerSchema {
                 }
                 max
             }
-            IntegerSchema::Bitfield(Bitfield { bits, .. }) => (1 << bits) - 1,
+            IntegerSchema::Bitfield(Bitfield { width: bits, .. }) => (1 << bits) - 1,
         }
     }
 }
@@ -367,19 +291,36 @@ impl From<PlainInteger> for IntegerSchema {
     }
 }
 
+impl TryFrom<RawIntegerSchema> for Bitfield {
+    type Error = ValidationError;
+
+    fn try_from(raw: RawIntegerSchema) -> Result<Self, Self::Error> {
+        if raw.bits.is_some() || raw.bit_offset.is_some() {
+            let bits = raw.bits.unwrap_or_else(|| raw.length * 8);
+            let offset = raw.bit_offset.unwrap_or_default();
+            Self::new(raw.length, bits, offset)
+        } else {
+            Err(ValidationError::NotABitfield)
+        }
+    }
+}
+
+impl TryFrom<RawIntegerSchema> for PlainInteger {
+    type Error = ValidationError;
+
+    fn try_from(raw: RawIntegerSchema) -> Result<Self, Self::Error> {
+        Self::new(raw.byteorder, raw.length, raw.signed)
+    }
+}
+
 impl TryFrom<RawIntegerSchema> for IntegerSchema {
     type Error = ValidationError;
 
     fn try_from(raw: RawIntegerSchema) -> Result<Self, Self::Error> {
         match Bitfield::try_from(raw.clone()) {
             Ok(bf) => Ok(bf.into()),
-            Err(e_bf) => match PlainInteger::try_from(raw) {
-                Ok(int) => Ok(int.into()),
-                Err(e_int) => Err(ValidationError::InvalidIntegerSchema {
-                    bf: Box::new(e_bf),
-                    int: Box::new(e_int),
-                }),
-            },
+            Err(ValidationError::NotABitfield) => PlainInteger::try_from(raw).map(Into::into),
+            Err(e) => Err(e),
         }
     }
 }
@@ -394,6 +335,44 @@ impl<'de> Deserialize<'de> for IntegerSchema {
     }
 }
 
+impl Encoder for Bitfield {
+    type Error = EncodingError;
+
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
+    where
+        W: io::Write + WriteBytesExt,
+    {
+        let value = value.as_u64().ok_or_else(|| EncodingError::InvalidValue {
+            value: value.to_string(),
+        })?;
+        let mut buffer = 0;
+        self.write(value, &mut buffer);
+        let int = self.integer();
+        int.encode(target, &buffer.into())
+    }
+}
+
+impl Encoder for PlainInteger {
+    type Error = EncodingError;
+
+    fn encode<W>(&self, target: &mut W, value: &Value) -> Result<usize, Self::Error>
+    where
+        W: io::Write + WriteBytesExt,
+    {
+        let value = value.as_i64().ok_or_else(|| EncodingError::InvalidValue {
+            value: value.to_string(),
+        })?;
+        match (self.byteorder, self.signed) {
+            (ByteOrder::BigEndian, true) => target.write_int::<BE>(value, self.length)?,
+            (ByteOrder::BigEndian, false) => target.write_uint::<BE>(value as _, self.length)?,
+            (ByteOrder::LittleEndian, true) => target.write_int::<LE>(value, self.length)?,
+            (ByteOrder::LittleEndian, false) => target.write_uint::<LE>(value as _, self.length)?,
+        };
+
+        Ok(self.length)
+    }
+}
+
 impl Encoder for IntegerSchema {
     type Error = EncodingError;
 
@@ -405,6 +384,35 @@ impl Encoder for IntegerSchema {
             IntegerSchema::Integer(schema) => schema.encode(target, value),
             IntegerSchema::Bitfield(schema) => schema.encode(target, value),
         }
+    }
+}
+
+impl Decoder for Bitfield {
+    type Error = DecodingError;
+
+    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
+    where
+        R: io::Read + ReadBytesExt,
+    {
+        let int = self.integer();
+        let int = int.decode(target)?.as_u64().expect("Is always u64.");
+        Ok(self.read(int).into())
+    }
+}
+
+impl Decoder for PlainInteger {
+    type Error = DecodingError;
+
+    fn decode<R>(&self, target: &mut R) -> Result<Value, Self::Error>
+    where
+        R: io::Read + ReadBytesExt,
+    {
+        Ok(match (self.byteorder, self.signed) {
+            (ByteOrder::BigEndian, true) => target.read_int::<BE>(self.length)?.into(),
+            (ByteOrder::BigEndian, false) => target.read_uint::<BE>(self.length)?.into(),
+            (ByteOrder::LittleEndian, true) => target.read_int::<LE>(self.length)?.into(),
+            (ByteOrder::LittleEndian, false) => target.read_uint::<LE>(self.length)?.into(),
+        })
     }
 }
 
