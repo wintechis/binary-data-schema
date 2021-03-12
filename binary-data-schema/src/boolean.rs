@@ -1,8 +1,8 @@
 //! Implementation of the boolean schema.
 //!
-//! By default [BooleanSchema] encode the Boolean values `true` and `false` to
-//! one byte. However, internally it only targets a single bit. This allows BDS
-//! to recognize [BooleanSchema] as [bitfields].
+//! By default [BooleanSchema] encode the Boolean values `true` and `false` to one byte.
+//! However, internally it only targets a single bit.
+//! This allows BDS to recognize [BooleanSchema] as [bitfields].
 //!
 //! # Parameters
 //!
@@ -11,8 +11,7 @@
 //! | `"bitoffset"` | `uint` |       0 | Number of bits the [bitfield] is shifted |
 //! | `"length"`    | `uint` |       1 | Number of bytes the field encodes |
 //!
-//! _Note:_ If the [BooleanSchema] is part of a merged [bitfield] its length
-//! must match the other bitfields.
+//! _Note:_ If the [BooleanSchema] is part of a merged [bitfield] its length must match the other bitfields.
 //!
 //! ## Validation
 //!
@@ -27,8 +26,8 @@
 //!
 //! # Example
 //!
-//! All parameters of [BooleanSchema] has default values. Accordingly, an empty
-//! schema is valid.
+//! All parameters of [BooleanSchema] has default values.
+//! Accordingly, an empty schema is valid.
 //!
 //! ```
 //! # use binary_data_schema::*;

@@ -9,20 +9,109 @@
 //!
 //! | Key           | Type     | Default  | Comment |
 //! | ------------- | --------:| --------:| ------- |
-//! | `"byteorder"` | "littleendian" or "bigendian" | "bigendian" | The order in which the bytes are encoded. |
-//! | `"length"`    | `uint`   |        4 | Number of bytes of the encoded integer |
-//! | `"signed"`    | `bool`   |     true | Whether the integer is signed or not |
-//! | `"bits"`      | `uint`   | optional | Number of bits the [bitfield] covers |
-//! | `"bitoffset"` | `uint`   | optional | Number of bits the [bitfield] is shifted |
+//! | `"byteorder"` | `string` | "bigendian" | The order in which the bytes are encoded. |
+//! | `"length"`    |   `uint` |        4 | Number of bytes of the encoded integer |
+//! | `"signed"`    |   `bool` |     true | Whether the integer is signed or not |
+//! | `"bits"`      |   `uint` | optional | Number of bits the [bitfield] covers |
+//! | `"bitoffset"` |   `uint` | optional | Number of bits the [bitfield] is shifted |
 //!
 //! ## Validation
+//!
+//! BDS only supports integers up to 64 bit.
+//! Accordingly, a `"length"` bigger than 8 is invalid.
 //!
 //! # Features
 //!
 //! ## Endianness
 //!
+//! Valid values for `"byteorder"` are `"bigendian"` and `"littleendian"`.
+//! Endianness defines the order the bytes of an integer are encoded.
+//! With big endian the Most Significant Byte (MSB) is placed first.
+//! Contrary, little endian encodes the Least Significant Byte (LSB) first.
+//!
+//! ### Example
+//!
+//! ```
+//! # use binary_data_schema::*;
+//! # use valico::json_schema;
+//! # use serde_json::{json, from_value};
+//! let schema = json!({
+//!     "type": "integer",
+//!     "byteorder": "littleendian",
+//!     "length": 2
+//! });
+//!
+//! let mut scope = json_schema::Scope::new();
+//! let j_schema = scope.compile_and_return(schema.clone(), false)?;
+//! let schema = from_value::<DataSchema>(schema)?;
+//!
+//! let value = json!(0x01_02);
+//! assert!(j_schema.validate(&value).is_valid());
+//! let mut encoded = Vec::new();
+//! schema.encode(&mut encoded, &value)?;
+//! let expected = [0x02, 0x01];
+//! assert_eq!(&expected, encoded.as_slice());
+//!
+//! let mut encoded = std::io::Cursor::new(encoded);
+//! let back = schema.decode(&mut encoded)?;
+//! assert!(j_schema.validate(&back).is_valid());
+//! assert_eq!(back, value);
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+//!
+//! ## Bitfield
+//!
+//! Integer can not only be encoded into full bytes but also into a number of bits.
+//! It is common practice to save space by [merging several bitfields] into a number of bytes if the individual values do not need a whole byte.
+//! For example, when a thermometer can only display 0 °C through 60 °C with a precision of 1 °C all values fit into 6 bits (max 63).
+//!
+//! ### Recognizing an Integer Schema as Bitfield
+//!
+//! An integer schema is recognized as bitfield when either `"bits"` or `"bitoffset"` are given.
+//!
+//! Bitfields are always _unsigned_ and _big endian_.
+//! When a bitfield is recognized the values for `"signed"` and `"byteorder"` are **ignored**.
+//!
+//! ### Example
+//!
+//! ```
+//! # use binary_data_schema::*;
+//! # use valico::json_schema;
+//! # use serde_json::{json, from_value};
+//! let schema = json!({
+//!     "type": "integer",
+//!     "bits": 6,
+//!     "bitoffset": 2,
+//!     "length": 1
+//! });
+//!
+//! let mut scope = json_schema::Scope::new();
+//! let j_schema = scope.compile_and_return(schema.clone(), false)?;
+//! let schema = from_value::<DataSchema>(schema)?;
+//!
+//! let value = json!(0b0011_1001); // decimal: 57
+//! assert!(j_schema.validate(&value).is_valid());
+//! let mut encoded = Vec::new();
+//! schema.encode(&mut encoded, &value)?;
+//! let expected = [ 0b1110_0100 ];
+//! assert_eq!(&expected, encoded.as_slice());
+//!
+//! let mut encoded = std::io::Cursor::new(encoded);
+//! let back = schema.decode(&mut encoded)?;
+//! assert!(j_schema.validate(&back).is_valid());
+//! assert_eq!(back, value);
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+//!
+//! ## Range and Multiples
+//!
+//! BDS does not check for [`"minimum"`, `"maximum"`] or [`"multiples"`], yet.
+//!
 //! [bitfields]: ../object/index.html#bitfields
 //! [bitfield]: ../object/index.html#bitfields
+//! [merging several bitfields]: ../object/index.html#bitfields
+//! [`"minimum"`, `"maximum"`]: https://json-schema.org/understanding-json-schema/reference/numeric.html#range
+//! [`"multiples"`]: https://json-schema.org/understanding-json-schema/reference/numeric.html#multiples
 
 use std::{convert::TryFrom, io};
 

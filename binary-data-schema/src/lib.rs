@@ -7,7 +7,7 @@
 //!
 //! # Features
 //!
-//! The specific features for each schema are explained in their submodule:
+//! The specific features for each schema are explained in their sub module:
 //!
 //! - [boolean schema](boolean)
 //! - [integer schema](integer)
@@ -30,6 +30,11 @@
 //! In general binary protocols often have some kind of _magic_ start and end
 //! bytes. To simulate those BDS uses the `const` keyword. When encoding a JSON
 //! document fields whose schema has a `const` value may not be provided.
+//!
+//! - Fields with `const` are not required for encoding but included when
+//!   decoded.
+//! - To keep BDS aligned with [JSON schema] it is recommended to add
+//!   [`"required"`] to object schemata.
 //!
 //! ### Example
 //!
@@ -73,7 +78,7 @@
 //! // 'value' is valid for the JSON schema
 //! assert!(j_schema.validate(&value).is_valid());
 //! let mut encoded = Vec::new();
-//! // 'value' is valud for the Binary Data schema
+//! // 'value' is valid for the Binary Data schema
 //! schema.encode(&mut encoded, &value)?;
 //! # let expected = [0xfe, 1, 0xef];
 //! # assert_eq!(&expected, encoded.as_slice());
@@ -85,18 +90,12 @@
 //!     "is_on": true,
 //!     "end": "ef"
 //! });
-//! // The retrieved value is vavlid for the JSON schema
+//! // The retrieved value is valid for the JSON schema
 //! assert!(j_schema.validate(&back).is_valid());
 //! // The retrieved value is as expected
 //! assert_eq!(back, expected);
 //! # Ok::<(), anyhow::Error>(())
 //! ```
-//!
-//! - Fields with `const` are not required for encoding but included when
-//!   decoded.
-//! - To keep BDS aligned with [JSON schema] it is recommended to add
-//!   [`"required"`] to object schemata.
-//!
 //!
 //! [JSON schema]: https://json-schema.org/
 //! [WoT Thing Descriptions]: https://www.w3.org/TR/wot-thing-description
