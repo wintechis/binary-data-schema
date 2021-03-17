@@ -197,7 +197,11 @@ impl TryFrom<RawNumber> for NumberSchema {
     type Error = ValidationError;
 
     fn try_from(raw: RawNumber) -> Result<Self, Self::Error> {
-        if raw.scale.is_some() || raw.offset.is_some() || raw.int.bit_offset.is_some() || raw.int.bits.is_some() {
+        if raw.scale.is_some()
+            || raw.offset.is_some()
+            || raw.int.bit_offset.is_some()
+            || raw.int.bits.is_some()
+        {
             let integer = IntegerSchema::try_from(raw.int)?;
             Ok(NumberSchema::Integer {
                 integer,

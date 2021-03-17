@@ -1,9 +1,8 @@
-//! Binary Data Schema (BDS) is an extension of [JSON schema]. With this
-//! extension it is possible to convert JSON documents into raw bytes and
+//! Binary Data Schema (BDS) is an extension of [JSON schema].
+//! With this extension it is possible to convert JSON documents into raw bytes and
 //! reverse.
 //!
-//! The intention is to use BDS in [WoT Thing Descriptions] in order to allow
-//! `application/octet-stream` as a [content type for forms].
+//! The intention is to use BDS in [WoT Thing Descriptions] in order to allow `application/octet-stream` as a [content type for forms].
 //!
 //! # Features
 //!
@@ -16,22 +15,21 @@
 //! - [array schema](array)
 //! - [object schema](object)
 //!
-//! Each feature is explained with an example. The examples follow the same
-//! structure as the (commented) [`const` example](#example) below.
+//! Each feature is explained with an example. The examples follow the same structure as the (commented) [`default` example](#example) below.
 //!
-//! BDS is by far not feature complete. If you do not find a feature described
-//! it is probably safe to assume that it is not yet implemented. If you
-//! require a specific feature [file an issue], please. PRs are also welcome.
+//! BDS is by far not feature complete. If you do not find a feature described it is probably safe to assume that it is not yet implemented.
+//! If you require a specific feature [file an issue], please.
+//! PRs are also welcome.
 //!
-//! ## `const`
+//! ## `default`
 //!
-//! The only feature described on this level is `const`.
+//! The only feature described on this level is `default`.
 //!
-//! In general binary protocols often have some kind of _magic_ start and end
-//! bytes. To simulate those BDS uses the `const` keyword. When encoding a JSON
-//! document fields whose schema has a `const` value may not be provided.
+//! In general binary protocols often have some kind of _magic_ start and end bytes.
+//! To simulate those BDS uses the [`default` keyword].
+//! When encoding a JSON document fields whose schema has a `default` value those do not have to be provided.
 //!
-//! - Fields with `const` are not required for encoding but included when
+//! - Fields with `default` are not required for encoding but included when
 //!   decoded.
 //! - To keep BDS aligned with [JSON schema] it is recommended to add
 //!   [`"required"`] to object schemata.
@@ -50,7 +48,7 @@
 //!             "format": "binary",
 //!             "minLength": 2,
 //!             "maxLength": 2,
-//!             "const": "fe",
+//!             "default": "fe",
 //!             "position": 1
 //!         },
 //!         "is_on": {
@@ -62,7 +60,7 @@
 //!             "format": "binary",
 //!             "minLength": 2,
 //!             "maxLength": 2,
-//!             "const": "ef",
+//!             "default": "ef",
 //!             "position": 10
 //!         }
 //!     },
@@ -101,6 +99,7 @@
 //! [WoT Thing Descriptions]: https://www.w3.org/TR/wot-thing-description
 //! [content type for forms]: https://www.w3.org/TR/2020/NOTE-wot-binding-templates-20200130/#content-types
 //! [file an issue]: https://github.com/wintechis/binary-data-schema/issues
+//! [`default` keyword]: http://json-schema.org/understanding-json-schema/reference/generic.html#annotations
 //! [`"required"`]: http://json-schema.org/understanding-json-schema/reference/object.html#required-properties
 
 #![warn(missing_debug_implementations)]
@@ -237,8 +236,8 @@ pub enum Error {
     #[error("Can not decode value as the encoded lenght is {len} but capcacity is only {cap}")]
     EncodedValueExceedsCapacity { len: usize, cap: usize },
 
-    #[error("The value '{value}' is invalid as 'const' for a {type_} schema: {source}")]
-    InvalidConst {
+    #[error("The value '{value}' is invalid as 'default' for a {type_} schema: {source}")]
+    InvalidDefault {
         value: String,
         type_: &'static str,
         #[source]
@@ -277,11 +276,11 @@ pub enum ByteOrder {
 struct RawDataSchema {
     #[serde(flatten)]
     inner: InnerSchema,
-    #[serde(rename = "const")]
-    const_: Option<Value>,
+    #[serde(rename = "default")]
+    default_: Option<Value>,
 }
 
-/// The inner data schema without special features like `"const"`.
+/// The inner data schema without special features like `"default"`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum InnerSchema {
@@ -297,7 +296,7 @@ pub enum InnerSchema {
 #[derive(Debug, Clone)]
 pub struct DataSchema {
     inner: InnerSchema,
-    const_: Option<Value>,
+    default_: Option<Value>,
 }
 
 impl Default for ByteOrder {
@@ -387,10 +386,10 @@ impl TryFrom<RawDataSchema> for DataSchema {
     type Error = Error;
 
     fn try_from(raw: RawDataSchema) -> Result<Self, Self::Error> {
-        if let Some(value) = &raw.const_ {
+        if let Some(value) = &raw.default_ {
             let mut dummy = Vec::new();
             if let Err(e) = raw.inner.encode(&mut dummy, value) {
-                return Err(Error::InvalidConst {
+                return Err(Error::InvalidDefault {
                     value: value.to_string(),
                     type_: raw.inner.type_(),
                     source: Box::new(e),
@@ -400,7 +399,7 @@ impl TryFrom<RawDataSchema> for DataSchema {
 
         Ok(Self {
             inner: raw.inner,
-            const_: raw.const_,
+            default_: raw.default_,
         })
     }
 }
@@ -465,7 +464,7 @@ where
         let inner = schema.into();
         Self {
             inner,
-            const_: None,
+            default_: None,
         }
     }
 }
@@ -477,7 +476,7 @@ impl Encoder for DataSchema {
     where
         W: io::Write + WriteBytesExt,
     {
-        if let Some(c) = &self.const_ {
+        if let Some(c) = &self.default_ {
             self.inner.encode(target, c)
         } else {
             self.inner.encode(target, value)
@@ -510,7 +509,7 @@ mod test {
                 "start": {
                     "type": "integer",
                     "length": 1,
-                    "const": 100,
+                    "default": 100,
                     "position": 1
                 },
                 "is_on": {
@@ -521,7 +520,7 @@ mod test {
                     "type": "integer",
                     "length": 1,
                     "signed": false,
-                    "const": 200,
+                    "default": 200,
                     "position": 10,
                 }
             }
@@ -557,7 +556,7 @@ mod test {
                     "format": "binary",
                     "minLength": 8,
                     "maxLength": 8,
-                    "const": "7e000503",
+                    "default": "7e000503",
                     "position": 1
                 },
                 "red": {
@@ -586,7 +585,7 @@ mod test {
                     "format": "binary",
                     "minLength": 4,
                     "maxLength": 4,
-                    "const": "00ef",
+                    "default": "00ef",
                     "position": 10
                 }
             }
@@ -618,7 +617,7 @@ mod test {
                     "format": "binary",
                     "minLength": 6,
                     "maxLength": 6,
-                    "const": "7e0004",
+                    "default": "7e0004",
                     "position": 1
                 },
                 "is_on": {
@@ -630,7 +629,7 @@ mod test {
                     "format": "binary",
                     "minLength": 10,
                     "maxLength": 10,
-                    "const": "00000000ef",
+                    "default": "00000000ef",
                     "position": 10
                 }
             }
@@ -659,7 +658,7 @@ mod test {
                     "format": "binary",
                     "minLength": 2,
                     "maxLength": 2,
-                    "const": "fe",
+                    "default": "fe",
                     "position": 1
                 },
                 "is_on": {
@@ -671,7 +670,7 @@ mod test {
                     "format": "binary",
                     "minLength": 2,
                     "maxLength": 2,
-                    "const": "ef",
+                    "default": "ef",
                     "position": 10
                 }
             },

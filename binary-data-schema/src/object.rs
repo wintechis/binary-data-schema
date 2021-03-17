@@ -197,7 +197,7 @@ impl Encoder for JoinedBitfield {
     {
         let mut buffer = 0;
         for (name, ds) in self.fields.iter() {
-            let value = match (value.get(name), ds.const_.as_ref()) {
+            let value = match (value.get(name), ds.default_.as_ref()) {
                 (Some(val), Some(c)) if val == c => Ok(val),
                 (Some(val), Some(c)) => Err(EncodingError::InvalidConstValue {
                     expected: c.to_string(),
@@ -293,7 +293,7 @@ impl Encoder for PropertySchema {
     {
         match self {
             PropertySchema::Simple { name, schema } => {
-                let value = match (value.get(name), schema.const_.as_ref()) {
+                let value = match (value.get(name), schema.default_.as_ref()) {
                     (Some(val), Some(c)) if val == c => Ok(val),
                     (Some(val), Some(c)) => Err(EncodingError::InvalidConstValue {
                         expected: c.to_string(),
@@ -496,7 +496,7 @@ mod test {
                 "version": {
                     "type": "integer",
                     "length": 1,
-                    "const": 5,
+                    "default": 5,
                     "position": 1,
                     "description": "Version number of the protocol."
                 },
@@ -599,8 +599,8 @@ mod test {
                 "mac": {
                     "type": "string",
                     "format": "binary",
-                    "minLength": 6,
-                    "maxLength": 6,
+                    "minLength": 12,
+                    "maxLength": 12,
                     "position": 80,
                     "description": "MAC address of the RuuviTag."
                 }
@@ -663,7 +663,7 @@ mod test {
         let mut cursor = std::io::Cursor::new(buffer);
 
         let _returned = schema.decode(&mut cursor)?;
-        // returned is rpughly the same but due to loss of precision due to floating point operations value is not exact.
+        // returned is roughly the same but due to loss of precision due to floating point operations value is not exact.
         //assert_eq!(value, returned);
 
         Ok(())
@@ -719,7 +719,7 @@ mod test {
         let mut cursor = std::io::Cursor::new(buffer);
 
         let _returned = schema.decode(&mut cursor)?;
-        // returned is rpughly the same but due to loss of precision due to floating point operations value is not exact.
+        // returned is roughly the same but due to loss of precision due to floating point operations value is not exact.
         //assert_eq!(value, returned);
 
         Ok(())
