@@ -1,4 +1,85 @@
 //! Implementation of the number schema
+//!
+//! When binary data is exchanged a common objective is to reduce the data size.
+//! For this the IEEE-754 formats are not suited.
+//! To reduce the size of a floating-point number linear interpolation can be used to fit a number into a smaller integer.
+//!
+//! # Parameters
+//!
+//! | Key           | Type     | Default  | Comment |
+//! | ------------- | --------:| --------:| ------- |
+//! | `"byteorder"` | `string` | "bigendian" | The order in which the bytes are encoded. |
+//! | `"length"`    |   `uint` |        4 | Number of bytes of the encoded number |
+//! | `"signed"`    |   `bool` |     true | Whether the number is signed or not |
+//! | `"bits"`      |   `uint` | optional | Number of bits the [bitfield] covers |
+//! | `"bitoffset"` |   `uint` | optional | Number of bits the [bitfield] is shifted |
+//! | `"scale"`     | `double` | optional | Factor to scale the encoded value |
+//! | `"offset"`    | `double` | optional | Offset for the encoded value |
+//!
+//! ## Validation
+//!
+//! If none of the optional parameters are provided only a length of 4 or 8 byte are valid (single and double precision floating-point numbers, IEEE 754).
+//! However, there are methods to [encode floating-point numbers as integers](#linear-interpolation).
+//!
+//! # Features
+//!
+//! ## Linear Interpolation
+//!
+//! Linear interpolation is performed if `"bits"`, `"bitoffset"`, `"scale"` or `"offset"` are set.
+//! If `"scale"` is not set the default value 1.0 is assumed.
+//! If `"offset"` is not set the default value 0.0 is assumed.
+//!
+//! For linear interpolation the parameters `"scale"` and `"offset"` are used.
+//! The formulae are as follows:
+//!
+//! - Encoding: `encoded_value = (json_value - offset) / scale`
+//! - Decoding: `json_value = scale * encoded_value + offset`
+//!
+//! An interpolated value is encoded with the integer schema defined by the number schema.
+//! Accordingly, it is also possible to encode an interpolated value in a [bitfield].
+//!
+//! ### Example
+//!
+//! The schema describes that a floating-point JSON value is encoded in the lower 11 bits (max 2047) with a scale of 0.001 and an offset of 1.6.
+//! The calculation to encode 3.0:
+//!
+//! ```text
+//! (3.0 - 1.6) / 0.001 = 1400 = 0b0000_0101_0111_1000 = encoded_value
+//! ```
+//!
+//! ```
+//! # use binary_data_schema::*;
+//! # use valico::json_schema;
+//! # use serde_json::{json, from_value};
+//! let schema = json!({
+//!     "type": "number",
+//!     "offset": 1.6,
+//!     "scale": 0.001,
+//!     "length": 2,
+//!     "bits": 11
+//! });
+//!
+//! let mut scope = json_schema::Scope::new();
+//! let j_schema = scope.compile_and_return(schema.clone(), false)?;
+//! let schema = from_value::<DataSchema>(schema)?;
+//!
+//! let value = json!(3.0);
+//! assert!(j_schema.validate(&value).is_valid());
+//! let mut encoded = Vec::new();
+//! schema.encode(&mut encoded, &value)?;
+//! let expected = [ 0b0000_0101, 0b0111_0111 ];
+//! //                                   ^^^^ rounding error
+//! assert_eq!(&expected, encoded.as_slice());
+//!
+//! let mut encoded = std::io::Cursor::new(encoded);
+//! let back = schema.decode(&mut encoded)?;
+//! assert!(j_schema.validate(&back).is_valid());
+//! // This would fail due to rounding errors
+//! // assert_eq!(back, value);
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+//!
+//! [bitfield]: ../object/index.html#bitfields
 
 use std::{convert::TryFrom, io};
 
@@ -51,7 +132,7 @@ impl DecodingError {
 #[serde(rename_all = "lowercase")]
 struct RawNumber {
     #[serde(flatten, default)]
-    raw_int: RawIntegerSchema,
+    int: RawIntegerSchema,
     scale: Option<f64>,
     offset: Option<f64>,
 }
@@ -115,24 +196,24 @@ impl NumberSchema {
 impl TryFrom<RawNumber> for NumberSchema {
     type Error = ValidationError;
 
-    fn try_from(value: RawNumber) -> Result<Self, Self::Error> {
-        if value.scale.is_some() || value.offset.is_some() {
-            let integer = IntegerSchema::try_from(value.raw_int)?;
+    fn try_from(raw: RawNumber) -> Result<Self, Self::Error> {
+        if raw.scale.is_some() || raw.offset.is_some() || raw.int.bit_offset.is_some() || raw.int.bits.is_some() {
+            let integer = IntegerSchema::try_from(raw.int)?;
             Ok(NumberSchema::Integer {
                 integer,
-                scale: value.scale.unwrap_or(DEFAULT_SCALE),
-                offset: value.offset.unwrap_or(DEFAULT_OFFSET),
+                scale: raw.scale.unwrap_or(DEFAULT_SCALE),
+                offset: raw.offset.unwrap_or(DEFAULT_OFFSET),
             })
         } else {
-            match value.raw_int.length {
+            match raw.int.length {
                 4 => Ok(NumberSchema::Float {
-                    byteorder: value.raw_int.byteorder,
+                    byteorder: raw.int.byteorder,
                 }),
                 8 => Ok(NumberSchema::Double {
-                    byteorder: value.raw_int.byteorder,
+                    byteorder: raw.int.byteorder,
                 }),
                 _ => Err(ValidationError::InvalidFloatingLength {
-                    requested: value.raw_int.length,
+                    requested: raw.int.length,
                 }),
             }
         }

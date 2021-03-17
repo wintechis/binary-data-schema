@@ -6,27 +6,27 @@
 
         "bitoffset": {
             "@id": "bds:bitoffset",
-            "@value": "xsd:integer"
+            "@type": "xsd:integer"
         },
         "byteorder": {
             "@id": "bds:byteorder",
-            "@value": "@vocab"
+            "@type": "@vocab"
         },
         "signed": {
             "@id": "bds:signed",
-            "@value": "xsd:boolean"
+            "@type": "xsd:boolean"
         },
         "bits": {
             "@id": "bds:bits",
-            "@value": "xsd:integer"
+            "@type": "xsd:integer"
         },
         "scale": {
             "@id": "bds:scale",
-            "@value": "xsd:double"
+            "@type": "xsd:double"
         },
         "offset": {
             "@id": "bds:offset",
-            "@value": "xsd:double"
+            "@type": "xsd:double"
         },
         "fixed": "bds:Fixed",
         "explicitlength": "bds:ExplicitLength",
@@ -35,16 +35,16 @@
         "tillend": "bds:TillEnd",
         "pattern": {
             "@id": "bds:pattern",
-            "@value": "xsd:string"
+            "@type": "xsd:string"
         },
         "padding": {
             "@id": "bds:padding",
-            "@value": "xsd:string"
+            "@type": "xsd:string"
         },
         "binary": "bds:BinaryFormat",
         "position": {
             "@id": "bds:position",
-            "@value": "xsd:integer"
+            "@type": "xsd:integer"
         }
     }
 }
