@@ -11,7 +11,7 @@
 //! | Key           | Type     | Default  | Comment |
 //! | ------------- | --------:| --------:| ------- |
 //! | `"position"`  |   `uint` |       NA | Position of the property in the encoded bytes |
-//! | `"jsonld:context"` | `string` |  NA | A context in the sense of [JSON-LD] that is attached to the JSON resulting from decoding |
+//! | `"jsonld:context"` | `string` | optional | A context in the sense of [JSON-LD] that is attached to the JSON resulting from decoding |
 //!
 //! ## Validation
 //!
@@ -155,6 +155,10 @@
 //! To do so the `"jsonld:context"` parameter is used like suggested in [JSON schema in RDF] draft.
 //! However, in contrast to the draft the value of `"jsonld:context"` is simply copied from the schema to `"@context"` in the result.
 //!
+//! For correct RDF interpretation of `"jsonld:context"` the JSON-LD context of the schema must declare the `jsonld` prefix.
+//! In BDS's own context (https://solid.ti.rw.fau.de/public/ns/bds/context.jsonld) this is done.
+//! Furthermore, this context allows to correctly interpret any binary data schema as RDF.
+//!
 //! ### Example
 //!
 //! ```
@@ -162,6 +166,7 @@
 //! # use valico::json_schema;
 //! # use serde_json::{json, from_value};
 //! let schema = json!({
+//!     "@context": "https://solid.ti.rw.fau.de/public/ns/bds/context.jsonld",
 //!     "type": "object",
 //!     "jsonld:context": "http://example.org/temperature/context.jsonld",
 //!     "properties": {
