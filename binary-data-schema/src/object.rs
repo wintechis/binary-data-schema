@@ -134,12 +134,10 @@
 //! assert!(j_schema.validate(&value).is_valid());
 //! let mut encoded = Vec::new();
 //! schema.encode(&mut encoded, &value)?;
-//! let num = 12 << 4;
+//! let num = 12 << 4;   // 2.4 / 0.2
 //! let int = 5 << 1;
-//! let bool_ = 0 << 0;
-//! println!("expected: {:#b}", num | int | bool_);
+//! let bool_ = 0 << 0;  // false
 //! let expected: [u8; 1] = [num | int | bool_];
-//! println!("encoded : {:#b}", encoded[0]);
 //! assert_eq!(&expected, encoded.as_slice());
 //!
 //! let mut encoded = std::io::Cursor::new(encoded);
@@ -180,7 +178,6 @@
 //! let schema = from_value::<DataSchema>(schema)?;
 //!
 //! let encoded: [u8; 1] = [ 21 ];
-//!
 //! let mut encoded = std::io::Cursor::new(encoded);
 //! let back = schema.decode(&mut encoded)?;
 //! assert!(j_schema.validate(&back).is_valid());
@@ -191,7 +188,6 @@
 //! assert_eq!(expected, back);
 //! # Ok::<(), anyhow::Error>(())
 //! ```
-//!
 //!
 //! [JSON-LD]: https://www.w3.org/TR/json-ld/#the-context
 //! [JSON-LD context]: https://www.w3.org/TR/json-ld/#the-context
