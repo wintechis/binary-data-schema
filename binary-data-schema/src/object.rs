@@ -468,12 +468,8 @@ impl Decoder for JoinedBitfield {
             let bf = ds.inner.bitfield().expect("ensured at consturctor");
             let value = bf.read(int);
             res[name] = match &ds.inner {
-                InnerSchema::Number(ns) => {
-                    ns.from_binary_value(value as _).into()
-                }
-                InnerSchema::Boolean(_) => {
-                    (value != 0).into()
-                }
+                InnerSchema::Number(ns) => ns.from_binary_value(value as _).into(),
+                InnerSchema::Boolean(_) => (value != 0).into(),
                 _ => value.into(),
             };
         }

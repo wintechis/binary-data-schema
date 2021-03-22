@@ -172,9 +172,9 @@ impl NumberSchema {
     /// Apply scale and offset to the value.
     pub fn to_binary_value(&self, value: f64) -> i64 {
         match self {
-            NumberSchema::Integer { scale, offset, .. } => 
+            NumberSchema::Integer { scale, offset, .. } => {
                 ((value - *offset) / *scale).round() as _
-            ,
+            }
             _ => value as _,
         }
     }
