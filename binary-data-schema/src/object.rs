@@ -1,8 +1,203 @@
-//! Implementation of the string schema
+//! Implementation of the object schema
+//!
+//! In BDS object schemata are generally used to map between byte strings and JSON object.
+//! This should be used for most schemata modeling bytes that contain several fields.
+//!
+//! Every field within a byte string is modeled as one property of the object schema.
+//! The order of fields is defined by the `"position"` parameter in the property's schema.
+//!
+//! # Parameters
+//!
+//! | Key           | Type     | Default  | Comment |
+//! | ------------- | --------:| --------:| ------- |
+//! | `"position"`  |   `uint` |       NA | Position of the property in the encoded bytes |
+//! | `"jsonld:context"` | `string` |  NA | A context in the sense of [JSON-LD] that is attached to the JSON resulting from decoding |
+//!
+//! ## Validation
+//!
+//! The positions of different properties should not be the same.
+//! Except they when they are defining a [merged bitfield].
 //!
 //! # Features
 //!
+//! ## Field Positions
+//!
+//! The BDS codec allows to transform JSON values into a byte string and reverse.
+//! To decode a byte string that is made of consecutive fields the describing object schema must define the order of fields.
+//! This is done via the `"position"` parameter in the properties of an object schema.
+//!
+//! `"position"`s of properties do not need to be continuous.
+//! They are just arranged in numeric order.
+//! However, they must not overlap.
+//! Except when several properties model a [merged bitfield].
+//!
+//! ### Example
+//!
+//! ```
+//! # use binary_data_schema::*;
+//! # use valico::json_schema;
+//! # use serde_json::{json, from_value};
+//! let schema = json!({
+//!     "type": "object",
+//!     "properties": {
+//!         "first": {
+//!             "type": "integer",
+//!             "length": 1,
+//!             "position": 10,
+//!         },
+//!         "third": {
+//!             "type": "integer",
+//!             "length": 1,
+//!             "position": 30,
+//!         },
+//!         "second": {
+//!             "type": "integer",
+//!             "length": 1,
+//!             "position": 20,
+//!         },
+//!     }
+//! });
+//!
+//! let mut scope = json_schema::Scope::new();
+//! let j_schema = scope.compile_and_return(schema.clone(), false)?;
+//! let schema = from_value::<DataSchema>(schema)?;
+//!
+//! let value = json!({ "third": 3, "first": 1, "second": 2});
+//! assert!(j_schema.validate(&value).is_valid());
+//! let mut encoded = Vec::new();
+//! schema.encode(&mut encoded, &value)?;
+//! let expected = [ 1, 2, 3 ];
+//! assert_eq!(&expected, encoded.as_slice());
+//!
+//! let mut encoded = std::io::Cursor::new(encoded);
+//! let back = schema.decode(&mut encoded)?;
+//! assert!(j_schema.validate(&back).is_valid());
+//! assert_eq!(back, value);
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+//!
 //! ## Bitfields
+//!
+//! One of the more complex features of BDS is merged bitfields.
+//! It is common practice to merge several fields into one byte to safe space.
+//! For example, a single byte can contain up to 8 Boolean values.
+//! In BDS every data schema that is recognized as a bitfield can be merged.
+//! Recognized bitfield schemata are:
+//!
+//! - boolean schema
+//! - integer schema with `"bits"` and/or `"bitoffset" set
+//! - numeric schema with `"bits"` and/or `"bitoffset" set
+//!
+//! To merge bitfields they must be all properties of the same object schema with the **same** `"position"` and same number of bytes.
+//! Accordingly, it may be necessary to set the length of a boolean schema to more than one byte to merge it.
+//!
+//! ### Example
+//!
+//! ```
+//! # use binary_data_schema::*;
+//! # use valico::json_schema;
+//! # use serde_json::{json, from_value};
+//! let schema = json!({
+//!     "type": "object",
+//!     "properties": {
+//!         "num": {
+//!             "type": "number",
+//!             "position": 10,
+//!             "scale": 0.2,
+//!             "length": 1,
+//!             "bits": 4,
+//!             "bitoffset": 4,
+//!         },
+//!         "int": {
+//!             "type": "integer",
+//!             "position": 10,
+//!             "length": 1,
+//!             "bits": 3,
+//!             "bitoffset": 1,
+//!         },
+//!         "bool": {
+//!             "type": "boolean",
+//!             "position": 10,
+//!         }
+//!     }
+//! });
+//!
+//! let mut scope = json_schema::Scope::new();
+//! let j_schema = scope.compile_and_return(schema.clone(), false)?;
+//! let schema = from_value::<DataSchema>(schema)?;
+//!
+//! let value = json!({
+//!     "num": 2.4,
+//!     "int": 5,
+//!     "bool": false
+//! });
+//! assert!(j_schema.validate(&value).is_valid());
+//! let mut encoded = Vec::new();
+//! schema.encode(&mut encoded, &value)?;
+//! let num = 12 << 4;
+//! let int = 5 << 1;
+//! let bool_ = 0 << 0;
+//! println!("expected: {:#b}", num | int | bool_);
+//! let expected: [u8; 1] = [num | int | bool_];
+//! println!("encoded : {:#b}", encoded[0]);
+//! assert_eq!(&expected, encoded.as_slice());
+//!
+//! let mut encoded = std::io::Cursor::new(encoded);
+//! let back = schema.decode(&mut encoded)?;
+//! assert!(j_schema.validate(&back).is_valid());
+//! // back is roughly the same but due to loss of precision because of floating point operations value is not exact.
+//! //assert_eq!(value, back);
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+//!
+//! ## JSON-LD Context
+//!
+//! While JSON is a self-describing format sometimes even this is not enough, e.g. when also the semantics of the data should be conveyed.
+//! For these cases the BDS codec can add a [JSON-LD context] to the resulting JSON document, turning it into machine-readable [Linked Data].
+//! To do so the `"jsonld:context"` parameter is used like suggested in [JSON schema in RDF] draft.
+//! However, in contrast to the draft the value of `"jsonld:context"` is simply copied from the schema to `"@context"` in the result.
+//!
+//! ### Example
+//!
+//! ```
+//! # use binary_data_schema::*;
+//! # use valico::json_schema;
+//! # use serde_json::{json, from_value};
+//! let schema = json!({
+//!     "type": "object",
+//!     "jsonld:context": "http://example.org/temperature/context.jsonld",
+//!     "properties": {
+//!         "temperature": {
+//!             "type": "integer",
+//!             "position": 10,
+//!             "length": 1,
+//!         }
+//!     }
+//! });
+//!
+//! let mut scope = json_schema::Scope::new();
+//! let j_schema = scope.compile_and_return(schema.clone(), false)?;
+//! let schema = from_value::<DataSchema>(schema)?;
+//!
+//! let encoded: [u8; 1] = [ 21 ];
+//!
+//! let mut encoded = std::io::Cursor::new(encoded);
+//! let back = schema.decode(&mut encoded)?;
+//! assert!(j_schema.validate(&back).is_valid());
+//! let expected = json!({
+//!     "@context": "http://example.org/temperature/context.jsonld",
+//!     "temperature": 21
+//! });
+//! assert_eq!(expected, back);
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+//!
+//!
+//! [JSON-LD]: https://www.w3.org/TR/json-ld/#the-context
+//! [JSON-LD context]: https://www.w3.org/TR/json-ld/#the-context
+//! [merged bitfield]: #bitfields
+//! [Linked Data]: https://www.w3.org/DesignIssues/LinkedData.html
+//! [JSON schema in RDF]: https://www.w3.org/2019/wot/json-schema#defining-a-json-ld-context-for-data-instances
 
 use std::{collections::HashMap, convert::TryFrom, io};
 
@@ -272,12 +467,15 @@ impl Decoder for JoinedBitfield {
         for (name, ds) in self.fields.iter() {
             let bf = ds.inner.bitfield().expect("ensured at consturctor");
             let value = bf.read(int);
-            if let InnerSchema::Number(ns) = &ds.inner {
-                let value = ns.from_binary_value(value as _);
-                res[name] = value.into();
-            } else {
-                res[name] = value.into();
-            }
+            res[name] = match &ds.inner {
+                InnerSchema::Number(ns) => {
+                    ns.from_binary_value(value as _).into()
+                }
+                InnerSchema::Boolean(_) => {
+                    (value != 0).into()
+                }
+                _ => value.into(),
+            };
         }
 
         Ok(res)
@@ -658,7 +856,7 @@ mod test {
         assert_eq!(2, schema.encode(&mut buffer, &value)?);
         let _battery = 0b101_0111_1000; // 1400 = 3.0 V
         let _tx_power = 0b1_0110; // 22 = +4 dBm
-        let expected: [u8; 2] = [0b1010_1110, 0b1111_0110];
+        let expected: [u8; 2] = [0b1010_1111, 0b0001_0110];
         assert_eq!(&expected, buffer.as_slice());
         let mut cursor = std::io::Cursor::new(buffer);
 
@@ -676,7 +874,7 @@ mod test {
                 "num": {
                     "type": "number",
                     "position": 10,
-                    "scale": 0.1,
+                    "scale": 0.2,
                     "length": 1,
                     "bits": 4,
                     "bitoffset": 4,
@@ -705,13 +903,13 @@ mod test {
         ));
 
         let value = json!({
-            "num": 3.0,
+            "num": 2.4,
             "int": 5,
             "bool": false
         });
         let mut buffer = Vec::new();
         assert_eq!(1, schema.encode(&mut buffer, &value)?);
-        let num = 30 << 4;
+        let num = 12 << 4;
         let int = 5 << 1;
         let bool_ = 0 << 0;
         let expected: [u8; 1] = [num | int | bool_];
@@ -720,7 +918,7 @@ mod test {
 
         let _returned = schema.decode(&mut cursor)?;
         // returned is roughly the same but due to loss of precision due to floating point operations value is not exact.
-        //assert_eq!(value, returned);
+        // assert_eq!(value, returned);
 
         Ok(())
     }

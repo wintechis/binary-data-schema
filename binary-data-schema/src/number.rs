@@ -67,8 +67,7 @@
 //! assert!(j_schema.validate(&value).is_valid());
 //! let mut encoded = Vec::new();
 //! schema.encode(&mut encoded, &value)?;
-//! let expected = [ 0b0000_0101, 0b0111_0111 ];
-//! //                                   ^^^^ rounding error
+//! let expected = [ 0b0000_0101, 0b0111_1000 ];
 //! assert_eq!(&expected, encoded.as_slice());
 //!
 //! let mut encoded = std::io::Cursor::new(encoded);
@@ -173,7 +172,9 @@ impl NumberSchema {
     /// Apply scale and offset to the value.
     pub fn to_binary_value(&self, value: f64) -> i64 {
         match self {
-            NumberSchema::Integer { scale, offset, .. } => ((value - *offset) / *scale) as _,
+            NumberSchema::Integer { scale, offset, .. } => 
+                ((value - *offset) / *scale).round() as _
+            ,
             _ => value as _,
         }
     }
@@ -307,7 +308,7 @@ mod test {
     use serde_json::{from_value, json};
 
     /// Enough for this tests.
-    fn eq_floaf(f1: f64, f2: f64) -> bool {
+    fn eq_fload(f1: f64, f2: f64) -> bool {
         (f1 - f2).abs() < 0.000_001
     }
 
@@ -333,7 +334,7 @@ mod test {
         let value = 22.5;
         let json: Value = value.into();
         let value_as_bin = 1250_f64;
-        assert!(eq_floaf(
+        assert!(eq_fload(
             value_as_bin,
             number2int.to_binary_value(value) as f64
         ));
