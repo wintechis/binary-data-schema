@@ -11,12 +11,8 @@ use crate::integer::IntegerSchema;
 pub enum RawLengthEncoding {
     Fixed,
     ExplicitLength(IntegerSchema),
-    EndPattern {
-        sentinel: Value,
-    },
-    Capacity {
-        padding: Value,
-    },
+    EndPattern { sentinel: Value },
+    Capacity { padding: Value },
     TillEnd,
 }
 

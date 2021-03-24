@@ -20,4 +20,4 @@ serde_json = "1.0"
 hex = "0.4"
 anyhow = "1.0"
 structopt = "0.3"
-binary-data-schema = { version = "0.1", path = "../binary-data-schema" }
+binary-data-schema = { version = "0.2", path = "../binary-data-schema" }
