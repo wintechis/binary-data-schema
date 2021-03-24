@@ -1,7 +1,7 @@
 //! Implementation of the number schema
 //!
 //! When binary data is exchanged a common objective is to reduce the data size.
-//! For this the IEEE-754 formats are not suited.
+//! For this the [IEEE 754] formats are not suited.
 //! To reduce the size of a floating-point number linear interpolation can be used to fit a number into a smaller integer.
 //!
 //! # Parameters
@@ -78,6 +78,7 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 //!
+//! [IEEE 754]: https://ieeexplore.ieee.org/document/8766229
 //! [bitfield]: ../object/index.html#bitfields
 
 use std::{convert::TryFrom, io};

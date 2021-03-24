@@ -4,6 +4,31 @@
 //!
 //! The intention is to use BDS in [WoT Thing Descriptions] in order to allow `application/octet-stream` as a [content type for forms].
 //!
+//! # Capabilities
+//!
+//! Following a list of all types that can be encoded.
+//! The list may not be exhaustive.
+//! Further explanation can be found in the description of the respective modules.
+//!
+//! - Boolean values (`true`, `false`)
+//! - Integer values:
+//!   - Length 1 to 8 bytes
+//!   - Big and Little Endianness
+//!   - Signed or unsigned
+//! - Number values:
+//!   - Single and double precision according to [IEEE 754]
+//!   - Via linear transformation (`value / scale - offset`) encoding as integer
+//! - Boolean, integer and numeric values can be encoded as bitfields (cover only a certain number of bits instead of whole bytes)
+//! - Object and array schemata allow for encoding complex data structures
+//! - UTF-8 strings
+//! - Hex-encoded strings (regex: `^[0-9a-f]{2}*$`)
+//! - Variable sized values, i.e. strings and arrays, have different ways to [define their length](crate::LengthEncoding):
+//!   - Fixed size
+//!   - Explicit length &rarr; Length of the value is encoded at the beginning of the value
+//!   - End pattern &rarr; The end of the value is marked by a sentinel value, like in C with `\0`
+//!   - Capacity &rarr; A fixed space is reserved. Unused space is filled with padding
+//!   - Till end &rarr; The value continues until the end of the message
+//!
 //! # Features
 //!
 //! The specific features for each schema are explained in their sub module:
@@ -99,6 +124,7 @@
 //! [WoT Thing Descriptions]: https://www.w3.org/TR/wot-thing-description
 //! [content type for forms]: https://www.w3.org/TR/2020/NOTE-wot-binding-templates-20200130/#content-types
 //! [file an issue]: https://github.com/wintechis/binary-data-schema/issues
+//! [IEEE 754]: https://ieeexplore.ieee.org/document/8766229
 //! [`default` keyword]: http://json-schema.org/understanding-json-schema/reference/generic.html#annotations
 //! [`"required"`]: http://json-schema.org/understanding-json-schema/reference/object.html#required-properties
 
