@@ -1,4 +1,105 @@
 //! Implementation of the string schema
+//!
+//! # Parameters
+//!
+//! | Key           | Type     | Default  | Comment |
+//! | ------------- | --------:| --------:| ------- |
+//! | `"lengthEncoding"` | `object` | `{ "type": "tillend" }` | The way the length of the string is communicated |
+//! | `"minLength"` |   `uint` | optional | Minimal length of the string |
+//! | `"maxLength"` |   `uint` | optional | Maximal length of the string |
+//! | `"format"`    | `string` | optional | Special format of the string |
+//!
+//! ## Length of a String
+//!
+//! The length of a string is the number of bytes required to store the UTF-8 string, e.g. `"ß"` is UTF-8 encoded as `0xC39F` so the length of `"ß"` is 2.
+//!
+//! ## Validation
+//!
+//! `"lengthEncoding"` has its own validation rules (see [`LengthEncoding`](crate::LengthEncoding)).
+//! This also includes the validity of the values of `"minLength"` and `"maxLength"`.
+//!
+//! At the moment the only value for `"format"` that is recognized by BDS is [`"binary"`] (cf. [binary format](#binary-format)).
+//!
+//! # Features
+//!
+//! ## Binary Format
+//!
+//! When handling binary data it is common to display such data as hex-encoded strings, e.g. `0d7f`.
+//! BDS supports the format `"binary"` to simulate this.
+//! Format `"binary"` means that a JSON string is limited to lower-case hex-digits `[a-f0-9]*` with an even length.
+//! While encoding two hex-digits are encoded as one byte.
+//! Accordingly, when decoding one byte in the byte string results in two hex-digits in the representing JSON string.
+//!
+//! ### Example
+//!
+//! ```
+//! # use binary_data_schema::*;
+//! # use valico::json_schema;
+//! # use serde_json::{json, from_value};
+//! let schema = json!({
+//!     "type": "string",
+//!     "format": "binary"
+//! });
+//!
+//! let mut scope = json_schema::Scope::new();
+//! let j_schema = scope.compile_and_return(schema.clone(), false)?;
+//! let schema = from_value::<DataSchema>(schema)?;
+//!
+//! let value = json!("deadbeaf42");
+//! assert!(j_schema.validate(&value).is_valid());
+//! let mut encoded = Vec::new();
+//! schema.encode(&mut encoded, &value)?;
+//! let expected = [ 0xde, 0xad, 0xbe, 0xaf, 0x42 ];
+//! assert_eq!(&expected, encoded.as_slice());
+//!
+//! let mut encoded = std::io::Cursor::new(encoded);
+//! let back = schema.decode(&mut encoded)?;
+//! assert!(j_schema.validate(&back).is_valid());
+//! assert_eq!(back, value);
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+//!
+//! ## Encoding Magic Bytes
+//!
+//! When binary data is used for communication less secure protocols tend to use special bytes to mark beginning and end of a message.
+//! We recommend to model this kind of _magic_ bytes by combining the [`"default"` feature] and `"binary"`-format strings.
+//!
+//! ### Example
+//!
+//! ```
+//! # use binary_data_schema::*;
+//! # use valico::json_schema;
+//! # use serde_json::{json, from_value};
+//! let schema = json!({
+//!     "type": "string",
+//!     "format": "binary",
+//!     "minLength": 4,
+//!     "maxLength": 4,
+//!     "default": "be42",
+//! });
+//!
+//! let mut scope = json_schema::Scope::new();
+//! let j_schema = scope.compile_and_return(schema.clone(), false)?;
+//! let schema = from_value::<DataSchema>(schema)?;
+//!
+//! // Note: '{}' is not a valid value for the JSON schema
+//! // but the interface requires a value.
+//! let value = json!({});
+//! let mut encoded = Vec::new();
+//! schema.encode(&mut encoded, &value)?;
+//! let expected = [ 0xbe, 0x42 ];
+//! assert_eq!(&expected, encoded.as_slice());
+//!
+//! let mut encoded = std::io::Cursor::new(encoded);
+//! let back = schema.decode(&mut encoded)?;
+//! assert!(j_schema.validate(&back).is_valid());
+//! let expected = json!("be42");
+//! assert_eq!(back, expected);
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+//!
+//! [`"binary"`]: https://swagger.io/docs/specification/data-models/data-types/#string
+//! [`"default"` feature]: ../index.html#default
 
 use std::{convert::TryFrom, io};
 
@@ -15,22 +116,19 @@ use crate::{
     ArraySchema, Decoder, Encoder, IntegerSchema,
 };
 
-/// Character `\0` is used as default end and padding.
-pub const DEFAULT_CHAR: &str = "00";
-
 /// Errors validating a [StringSchema].
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
-    #[error("The given end 'pattern' or 'padding' is not of binary format: {0}")]
+    #[error("The given end 'sentinel' or 'padding' is not of binary format: {0}")]
     NotHexPattern(#[from] hex::FromHexError),
-    #[error("End 'pattern' and 'padding' are limited to one byte but '{pattern}' is longer")]
-    InvalidPattern { pattern: String },
+    #[error("'sentinel' and 'padding' are limited to one byte but '{sentinel}' is longer")]
+    InvalidPattern { sentinel: String },
     #[error("A fixed length string schema requires both 'maxLength' and 'minLength' given and having the same value")]
     IncompleteFixedLength,
     #[error("Length encoding 'capacity' requires 'maxLength'")]
     MissingCapacity,
-    #[error("The provided pattern or padding '{pattern}' is not a string")]
-    NotAString { pattern: Value },
+    #[error("The provided sentinel or padding '{sentinel}' is not a string")]
+    NotAString { sentinel: Value },
     #[error("Requested a fixed length or a capacity of {0}: Binary format strings have always an even length as bytes are mapped to two characters")]
     OddLimit(usize),
 }
@@ -112,24 +210,24 @@ pub enum StringSchema {
 }
 
 impl Format {
-    fn validate_pattern(&self, pattern: &str) -> Result<(), ValidationError> {
+    fn validate_pattern(&self, sentinel: &str) -> Result<(), ValidationError> {
         match self {
             Format::Utf8 => {
-                if pattern.len() == 1 {
+                if sentinel.len() == 1 {
                     Ok(())
                 } else {
                     Err(ValidationError::InvalidPattern {
-                        pattern: pattern.to_owned(),
+                        sentinel: sentinel.to_owned(),
                     })
                 }
             }
             Format::Binary => {
-                let encoded = hex::decode(pattern)?;
+                let encoded = hex::decode(sentinel)?;
                 if encoded.len() == 1 {
                     Ok(())
                 } else {
                     Err(ValidationError::InvalidPattern {
-                        pattern: pattern.to_owned(),
+                        sentinel: sentinel.to_owned(),
                     })
                 }
             }
@@ -155,21 +253,21 @@ impl TryFrom<RawString> for StringSchema {
                 RawLengthEncoding::ExplicitLength(schema) => {
                     Ok(LengthEncoding::LengthEncoded(schema))
                 }
-                RawLengthEncoding::EndPattern { pattern } => {
-                    let pat_str = pattern
+                RawLengthEncoding::EndPattern { sentinel } => {
+                    let pat_str = sentinel
                         .as_str()
                         .ok_or_else(|| ValidationError::NotAString {
-                            pattern: pattern.clone(),
+                            sentinel: sentinel.clone(),
                         })?;
                     format.validate_pattern(pat_str)?;
-                    Ok(LengthEncoding::EndPattern { pattern })
+                    Ok(LengthEncoding::EndPattern { sentinel })
                 }
                 RawLengthEncoding::Capacity { padding } => {
                     let capacity = raw.max_length.ok_or(ValidationError::MissingCapacity)?;
                     let pad_str = padding
                         .as_str()
                         .ok_or_else(|| ValidationError::NotAString {
-                            pattern: padding.clone(),
+                            sentinel: padding.clone(),
                         })?;
                     format.validate_pattern(pad_str)?;
                     Ok(LengthEncoding::Capacity { capacity, padding })
@@ -242,11 +340,11 @@ impl Encoder for StringSchema {
                     target.write_all(value.as_bytes())?;
                     value.len() + int.length()
                 }
-                LengthEncoding::EndPattern { pattern } => {
-                    contains_end_sequencs(value, pattern)?;
+                LengthEncoding::EndPattern { sentinel } => {
+                    contains_end_sequencs(value, sentinel)?;
                     target.write_all(value.as_bytes())?;
-                    target.write_all(pattern.as_bytes())?;
-                    value.len() + pattern.len()
+                    target.write_all(sentinel.as_bytes())?;
+                    value.len() + sentinel.len()
                 }
                 LengthEncoding::Capacity {
                     padding, capacity, ..
@@ -344,7 +442,7 @@ impl Decoder for StringSchema {
                             .expect("length is always u64");
                         read_with_length(target, length as _)?
                     }
-                    LengthEncoding::EndPattern { pattern } => {
+                    LengthEncoding::EndPattern { sentinel: pattern } => {
                         read_with_pattern(target, pattern, usize::MAX)?
                     }
                     LengthEncoding::Capacity { padding, capacity } => {
@@ -392,7 +490,11 @@ where
     for b in reader.bytes() {
         let b = b?;
         buf.push(b);
-        if buf.len() == max || buf.ends_with_str(pattern) {
+        if buf.ends_with_str(pattern) {
+            buf.pop();
+            return Ok(buf);
+        }
+        if buf.len() == max {
             return Ok(buf);
         }
     }
@@ -416,8 +518,8 @@ mod test {
             "minLength": 4,
             "maxLength": 4,
             "lengthEncoding": {
-                "type": "endpattern",
-                "pattern": "!"
+                "@type": "endpattern",
+                "sentinel": "!"
             }
         });
         let schema: StringSchema = from_value(schema)?;
@@ -445,7 +547,7 @@ mod test {
     fn incomplete_fixed() -> Result<()> {
         let schema = json!({
             "maxLength": 5,
-            "lengthEncoding": { "type": "fixed" }
+            "lengthEncoding": { "@type": "fixed" }
         });
         assert!(from_value::<StringSchema>(schema).is_err());
 
@@ -456,7 +558,7 @@ mod test {
     fn length() -> Result<()> {
         let schema = json!({
             "lengthEncoding": {
-                "type": "explicitlength",
+                "@type": "explicitlength",
                 "length": 1
             }
         });
@@ -483,8 +585,8 @@ mod test {
     fn simple_pattern() -> Result<()> {
         let schema = json!({
             "lengthEncoding": {
-                "type": "endpattern",
-                "pattern": "\0"
+                "@type": "endpattern",
+                "sentinel": "\0"
             }
         });
         let schema: StringSchema = from_value(schema)?;
@@ -510,8 +612,8 @@ mod test {
         println!("entry");
         let schema = json!({
             "lengthEncoding": {
-                "type": "endpattern",
-                "pattern": "00"
+                "@type": "endpattern",
+                "sentinel": "00"
             },
             "format": "binary",
         });
@@ -563,8 +665,8 @@ mod test {
         // allowed to have one byte.
         let schema = json!({
             "lengthEncoding": {
-                "type": "endpattern",
-                "pattern": "ß"
+                "@type": "endpattern",
+                "sentinel": "ß"
             }
         });
         assert!(from_value::<StringSchema>(schema).is_err());
@@ -576,8 +678,8 @@ mod test {
     fn other_pattern() -> Result<()> {
         let schema = json!({
             "lengthEncoding": {
-                "type": "endpattern",
-                "pattern": "!"
+                "@type": "endpattern",
+                "sentinel": "!"
             }
         });
         let schema: StringSchema = from_value(schema)?;
@@ -602,8 +704,8 @@ mod test {
     fn pattern_included() -> Result<()> {
         let schema = json!({
             "lengthEncoding": {
-                "type": "endpattern",
-                "pattern": "a"
+                "@type": "endpattern",
+                "sentinel": "a"
             }
         });
         let schema: StringSchema = from_value(schema)?;
@@ -627,7 +729,7 @@ mod test {
     fn invalid_padding() -> Result<()> {
         let schema = json!({
             "lengthEncoding": {
-                "type": "capacity",
+                "@type": "capacity",
                 "padding": "µ"
             },
             "maxLength": 10
@@ -642,7 +744,7 @@ mod test {
     fn missing_capacity() -> Result<()> {
         let schema = json!({
             "lengthEncoding": {
-                "type": "capacity",
+                "@type": "capacity",
                 "padding": "\0"
             }
         });
@@ -656,7 +758,7 @@ mod test {
     fn capacity() -> Result<()> {
         let schema = json!({
             "lengthEncoding": {
-                "type": "capacity",
+                "@type": "capacity",
                 "padding": "!"
             },
             "maxLength": 10
@@ -685,7 +787,7 @@ mod test {
         println!("entry");
         let schema = json!({
             "lengthEncoding": {
-                "type": "capacity",
+                "@type": "capacity",
                 "padding": "00"
             },
             "maxLength": 10,

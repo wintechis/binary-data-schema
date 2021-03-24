@@ -111,6 +111,7 @@ pub mod number;
 pub mod object;
 pub mod string;
 pub(crate) mod util;
+pub use self::util::LengthEncoding;
 
 use std::{convert::TryFrom, io, string::FromUtf8Error};
 

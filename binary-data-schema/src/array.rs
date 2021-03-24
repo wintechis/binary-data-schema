@@ -124,9 +124,9 @@ impl TryFrom<RawArray> for ArraySchema {
                 RawLengthEncoding::ExplicitLength(schema) => {
                     Ok(LengthEncoding::LengthEncoded(schema))
                 }
-                RawLengthEncoding::EndPattern { pattern } => {
+                RawLengthEncoding::EndPattern { sentinel: pattern } => {
                     validate_value(&pattern, &schema)?;
-                    Ok(LengthEncoding::EndPattern { pattern })
+                    Ok(LengthEncoding::EndPattern { sentinel: pattern })
                 }
                 RawLengthEncoding::Capacity { padding } => {
                     let capacity = raw.max_items.ok_or(ValidationError::MissingCapacity)?;
@@ -158,7 +158,7 @@ impl ArraySchema {
     pub fn byte_array(length: LengthEncoding<Value>) -> Result<Self, ValidationError> {
         let byte_schema = IntegerSchema::unsigned_byte().into();
         match &length {
-            LengthEncoding::EndPattern { pattern: value }
+            LengthEncoding::EndPattern { sentinel: value }
             | LengthEncoding::Capacity { padding: value, .. } => {
                 validate_value(value, &byte_schema)?;
             }
@@ -192,7 +192,7 @@ impl ArraySchema {
                     Ok(())
                 }
             }
-            LengthEncoding::EndPattern { pattern } => {
+            LengthEncoding::EndPattern { sentinel: pattern } => {
                 if slice.iter().any(|v| v == pattern) {
                     Err(EncodingError::ContainsPatternOrPadding(pattern.clone()))
                 } else {
@@ -243,8 +243,8 @@ impl Encoder for ArraySchema {
         }
         // post-value
         match &self.length {
-            LengthEncoding::EndPattern { pattern } => {
-                written += self.items.encode(target, pattern)?;
+            LengthEncoding::EndPattern { sentinel } => {
+                written += self.items.encode(target, sentinel)?;
             }
             LengthEncoding::Capacity { padding, capacity } => {
                 let left = *capacity - len;
@@ -279,7 +279,7 @@ impl Decoder for ArraySchema {
                     .map(|_| self.items.decode(target))
                     .collect::<Result<Vec<_>, _>>()?
             }
-            LengthEncoding::EndPattern { pattern } => {
+            LengthEncoding::EndPattern { sentinel: pattern } => {
                 let mut elements = Vec::new();
                 loop {
                     let element = self.items.decode(target)?;
@@ -383,7 +383,7 @@ mod test {
     fn length() -> Result<()> {
         let schema = json!({
             "lengthEncoding": {
-                "type": "explicitlength",
+                "@type": "explicitlength",
                 "length": 1,
                 "signed": false
             },
