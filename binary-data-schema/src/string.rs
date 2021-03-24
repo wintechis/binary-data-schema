@@ -1,5 +1,16 @@
 //! Implementation of the string schema
 //!
+//! Strings are not used very often when handling binary data.
+//! However, strings have by nature no fixed length.
+//! Accordingly, there are several ways to [encode the length](crate::LengthEncoding) of a string.
+//!
+//! Furthermore, hex-encoded strings can be used to give a more human-readable version of raw bytes.
+//! Accordingly, the BDS codec allows to map between hex-encoded strings and raw bytes.
+//!
+//! # Length of a String
+//!
+//! The length of a string is the number of bytes required to store the UTF-8 string, e.g. `"ß"` is UTF-8 encoded as `0xC39F` so the length of `"ß"` is 2.
+//!
 //! # Parameters
 //!
 //! | Key           | Type     | Default  | Comment |
@@ -8,10 +19,6 @@
 //! | `"minLength"` |   `uint` | optional | Minimal length of the string |
 //! | `"maxLength"` |   `uint` | optional | Maximal length of the string |
 //! | `"format"`    | `string` | optional | Special format of the string |
-//!
-//! ## Length of a String
-//!
-//! The length of a string is the number of bytes required to store the UTF-8 string, e.g. `"ß"` is UTF-8 encoded as `0xC39F` so the length of `"ß"` is 2.
 //!
 //! ## Validation
 //!

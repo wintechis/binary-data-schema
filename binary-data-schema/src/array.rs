@@ -1,4 +1,35 @@
-//! Implementation of the string schema
+//! Implementation of the array schema
+//!
+//! # Length of an Array
+//!
+//! The length of an array is the number of elements stored.
+//!
+//! # Parameters
+//!
+//! | Key           | Type     | Default  | Comment |
+//! | ------------- | --------:| --------:| ------- |
+//! | `"lengthEncoding"` | `object` | `{ "type": "tillend" }` | The way the length of the string is communicated |
+//! | `"minItems"`  |   `uint` | optional | Minimal number of items in the array |
+//! | `"maxItems"`  |   `uint` | optional | Maximal number of items in the array |
+//! | `"items"`     | data schema | required | Schema validating the elements of the array |
+//!
+//! ## Validation
+//!
+//! `"lengthEncoding"` has its own validation rules (see [`LengthEncoding`](crate::LengthEncoding)).
+//! This also includes the validity of the values of `"minItems"` and `"maxItems"`.
+//!
+//! In contrast to JSON schema, BDS does not support [tuples].
+//! Accordingly, it is only allowed to have a single data schema as the value of `"items"`.
+//!
+//! # Features
+//!
+//! Apart from the length encoding that arrays schemata share with string schemata,
+//! there are no special features implemented for array schemata.
+//! Neither [tuple validation] nor [uniqueness].
+//!
+//! [tuples]: https://json-schema.org/understanding-json-schema/reference/array.html#tuple-validation
+//! [tuple validation]: https://json-schema.org/understanding-json-schema/reference/array.html#tuple-validation
+//! [uniqueness]: https://json-schema.org/understanding-json-schema/reference/array.html#uniqueness
 
 use std::{convert::TryFrom, io};
 
