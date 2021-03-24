@@ -407,6 +407,30 @@ impl DataSchema {
     pub fn is_bitfield(&self) -> bool {
         self.inner.is_bitfield()
     }
+
+    pub fn has_length_encoding_till_end(&self) -> bool {
+        match &self.inner {
+            InnerSchema::String(string) => matches!(
+                string.as_ref(),
+                StringSchema::Utf8 {
+                    length: LengthEncoding::TillEnd
+                } | StringSchema::Binary {
+                    inner: ArraySchema {
+                        length: LengthEncoding::TillEnd,
+                        ..
+                    }
+                }
+            ),
+            InnerSchema::Array(array) => matches!(
+                array.as_ref(),
+                ArraySchema {
+                    length: LengthEncoding::TillEnd,
+                    ..
+                }
+            ),
+            _ => false,
+        }
+    }
 }
 
 impl TryFrom<RawDataSchema> for DataSchema {

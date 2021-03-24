@@ -59,6 +59,8 @@ pub enum ValidationError {
     },
     #[error("Length encoding 'capacity' requires 'maxItems'")]
     MissingCapacity,
+    #[error("Schemata with 'tillend' length encoding are not allowed in arrays")]
+    TillEndSchema,
 }
 
 /// Errors encoding a string with an [ArraySchema].
@@ -168,10 +170,14 @@ impl TryFrom<RawArray> for ArraySchema {
             },
         }?;
 
-        Ok(Self {
-            length,
-            items: schema,
-        })
+        if schema.has_length_encoding_till_end() {
+            Err(ValidationError::TillEndSchema)
+        } else {
+            Ok(Self {
+                length,
+                items: schema,
+            })
+        }
     }
 }
 

@@ -226,6 +226,8 @@ pub enum ValidationError {
     OverlappingBitfields,
     #[error("The position {0} has been used multiple times in the object schema but only bitfields are allowed to share a position")]
     InvalidPosition(usize),
+    #[error("Schemata with `tillend` are not allowed as properties if they are not the last one")]
+    TillEndBeforeEnd,
 }
 
 /// Errors encoding a string with an [ObjectSchema].
@@ -506,6 +508,19 @@ impl Encoder for PropertySchema {
 }
 
 impl PropertySchema {
+    fn schema(&self) -> &DataSchema {
+        match self {
+            PropertySchema::Simple { schema, .. } => schema,
+            PropertySchema::Merged(JoinedBitfield { fields, .. }) => {
+                fields
+                    .iter()
+                    .last()
+                    .as_ref()
+                    .expect("Constructor ensures non-empty 'fields'")
+                    .1
+            }
+        }
+    }
     /// Decodes values and adds them to the provided Json.
     ///
     /// This is contrary to the normal [Decoder] trait where new values are
@@ -572,10 +587,20 @@ impl TryFrom<RawObject> for ObjectSchema {
         }
 
         properties.sort_by(|p1, p2| p1.position.cmp(&p2.position));
-        Ok(Self {
-            properties,
-            context: raw.context,
-        })
+
+        let last = properties.len() - 1;
+        if properties
+            .iter()
+            .enumerate()
+            .any(|(idx, p)| idx != last && p.schema.schema().has_length_encoding_till_end())
+        {
+            Err(ValidationError::TillEndBeforeEnd)
+        } else {
+            Ok(Self {
+                properties,
+                context: raw.context,
+            })
+        }
     }
 }
 
@@ -954,6 +979,25 @@ mod test {
         });
         assert_eq!(returned, expected);
 
+        Ok(())
+    }
+    #[test]
+    fn wrong_till_end() -> Result<()> {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "wrong": {
+                    "type": "string",
+                    "position": 10
+                },
+                "byte": {
+                    "type": "integer",
+                    "length": 1,
+                    "position": 20
+                }
+            }
+        });
+        assert!(from_value::<DataSchema>(schema).is_err());
         Ok(())
     }
 }
